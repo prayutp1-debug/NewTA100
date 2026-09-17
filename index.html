@@ -194,7 +194,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","ค่าบริหารความพร้อม"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 12;
+var ENGINE_VERSION = 13;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000, ready:true},
@@ -592,8 +592,9 @@ function buildDB(sheets, report){
       var fm = fr[ym] || (fr[ym] = {});
       var fd = fm[day] || (fm[day] = {a:0, r:[]});
       fd.a += FINE[pout];
-      var fw = "−" + FINE[pout] + " บาท " +
-               (S(cell(p,iPoutN)) || MEANING["punch_out_status|"+pout] || pout) +
+      // ข้อความสาเหตุใช้ช่อง "ความหมายจากระบบ" ของรหัสนั้นในชีต คะแนน-Punch
+      var fw = "−" + FINE[pout] + " บาท · รหัส " + pout + " : " +
+               (MEANING["punch_out_status|"+pout] || S(cell(p,iPoutN)) || pout) +
                " (รถ " + truck + ")";
       if (fd.r.indexOf(fw) < 0) fd.r.push(fw);
     }
@@ -759,7 +760,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 15;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 17;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1881,7 +1882,14 @@ function sheetSpec(){
       ...orgCols,
       ...cols.map((c,i)=>({l:dayHead[i], t:"score", w:6, align:"center",
         f:x=>{ const dm=x.days[c.ym]; return dm && dm[c.day]!=null ? dm[c.day] : ""; },
-        fill:v=>(v===""?null:XC.score[v] || XC.score[0])})),
+        fill:v=>(v===""?null:XC.score[v] || XC.score[0]),
+        note:x=>{
+          const rm = x.rmk[c.ym] && x.rmk[c.ym][c.day];
+          if (!rm) return "";
+          const dm = x.days[c.ym], v = dm ? dm[c.day] : null;
+          return `${c.label} วันที่ ${c.day} · รถ ${x.truck} — ได้ ${nf(v,2)} คะแนน\n`+
+                 `${v < 1 ? "สาเหตุที่ถูกหัก:" : "หมายเหตุ:"}\n${rm}`;
+        }})),
       {l:"คะแนนรวม", t:"num2", w:11, f:x=>x.score},
       {l:"%TA", t:"pct", w:9, f:x=>x.pct},
       {l:"กลุ่ม TA", t:"str", w:9, align:"center", f:x=>x.tier, tier:true}
@@ -1898,7 +1906,8 @@ function sheetSpec(){
       {l:"รายได้ค่าขนส่ง", t:"money", w:15, f:x=>x.revenue},
       {l:"%TA", t:"pct", w:9, f:x=>x.pct},
       {l:"กลุ่ม TA", t:"str", w:9, align:"center", f:x=>x.tier, tier:true},
-      {l:"อัตรา (บาท/คิว)", t:"int", w:13, f:x=>x.inc_rate},
+      {l:"อัตรา (บาท/คิว)", t:"int", w:13, f:x=>x.inc_rate,
+       note:x=>x.zero ? ("ถูกตัดเงินรางวัล บาท/คิว เป็น 0\n" + x.zreason) : ""},
       {l:"เงินรางวัล", t:"money", w:14, f:x=>x.incentive},
       {l:"ฐานการันตี", t:"money", w:13, f:x=>x.g_base},
       {l:"%การันตี", t:"pct", w:10, f:x=>x.g_pct},
@@ -1915,7 +1924,14 @@ function sheetSpec(){
       ...orgCols,
       ...cols.map((c,i)=>({l:dayHead[i], t:"fine", w:6, align:"center",
         f:x=>{ const dm=x.days[c.ym]; return dm && dm[c.day] ? dm[c.day] : 0; },
-        fill:v=>(v? XC.score[0] : XC.ok)})),
+        fill:v=>(v? XC.score[0] : XC.ok),
+        note:x=>{
+          const wm = x.why[c.ym], wy = wm && wm[c.day];
+          if (!wy) return "";
+          const dm = x.days[c.ym];
+          return `${c.label} วันที่ ${c.day} · จบส. ${x.driver} — ถูกหัก ${n0(dm[c.day])} บาท\n`+
+                 `สาเหตุ:\n${wy}`;
+        }})),
       {l:"รวมยอดเงินที่หัก (บาท)", t:"money", w:20, f:x=>x.total, bold:true},
       {l:"สาเหตุที่ถูกหัก", t:"str", w:60, f:x=>{
         const out = [];
@@ -2003,6 +2019,10 @@ function exportXLSX(){
           if (col.tier && XC.tier[v]){ opt.fill = XC.tier[v][0]; opt.color = XC.tier[v][1]; opt.bold = true; }
           if (typeof v === "number" && v < 0 && !opt.color) opt.color = XC.neg;
           const cell = xCell(v, col.t, opt);
+          if (col.note){
+            const n = col.note(row);
+            if (n){ cell.c = [{a:"TA100", t:n}]; cell.c.hidden = true; }
+          }
           put(ri+1, ci, cell);
         });
         if (heavy && ri % 8000 === 0) stage("กำลังใส่สีและเส้นตาราง", .35 + ri/spec.rows.length*.4);
