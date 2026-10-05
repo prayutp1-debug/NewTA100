@@ -1146,7 +1146,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 57;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 58;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1196,8 +1196,9 @@ function fail(msg, hint){
   $("#ld-stage").textContent = "";
   $("#ld-fail").innerHTML = `<div class="fail"><b>${esc(msg)}</b>${hint?"<br><br>"+hint:""}</div>` +
     `<div class="row"><button class="btn" onclick="location.reload()">ลองใหม่</button>` +
-    `<button class="btn primary" id="ld-pick">เลือกไฟล์ Excel จากเครื่อง</button></div>`;
-  $("#ld-pick").onclick = ()=>$("#file-input").click();
+    (isAdmin() ? `<button class="btn primary" id="ld-pick">เลือกไฟล์ Excel จากเครื่อง</button>` : "") +
+    `</div>`;
+  if ($("#ld-pick")) $("#ld-pick").onclick = ()=>$("#file-input").click();
 }
 
 /* ── คำนวณจากไฟล์ Excel (ใช้ Worker ถ้ามี) — คืนค่าเป็นสตริง JSON ── */
@@ -3188,6 +3189,9 @@ var USER_CSV_URL = '';                 // (ถ้ามี) ลิงก์ CSV 
 var LOCAL_CSV    = 'users.csv';        // สำรอง: วางไฟล์ CSV ไว้โฟลเดอร์เดียวกับ index.html
 var API_URL      = 'https://script.google.com/macros/s/AKfycbw6vA73LZOb0xS2Vx-rTGTgQcr0vL4PGP_VKLORuGdnWelgydS3Zo090QDLiqj9_lQN/exec';
 var LS_KEY       = 'taDashAuth_v1';
+/* ผู้ใช้ที่เห็นปุ่ม “โหลดข้อมูลใหม่ / ใช้ไฟล์ Excel อื่น / บันทึกไฟล์ข้อมูล” (เทียบกับช่อง User ในชีต
+   ไม่สนตัวพิมพ์เล็กใหญ่) — เพิ่มชื่อได้ เช่น ['sirilukt','somchai'] */
+var ADMIN_USERS  = ['sirilukt'];
 
 var gid = function(id){ return document.getElementById(id); };
 function txt(v){ return v==null ? '' : String(v).trim(); }
@@ -3341,6 +3345,10 @@ function verifyLogin(u,p){
 }
 function startSession(u){
   SESSION={ name:u.name||u.user, code:u.user, status:u.status, all:/SCG/.test(u.status||'') };
+  SESSION.admin = ADMIN_USERS.some(function(n){ return normUser(n) === normUser(u.user); });
+  ['btn-reload','btn-pick','btn-json'].forEach(function(id){
+    var b = gid(id); if (b) b.hidden = !SESSION.admin;
+  });
   gid('whoChip').textContent = SESSION.name;
   gid('whoChip').title = 'ผู้ใช้ ' + SESSION.code + (SESSION.status? ' · '+SESSION.status : '');
   gid('roleChip').textContent = SESSION.all ? 'SCG — ดูได้ทุกผู้รับเหมา' : 'ผู้รับเหมา — เห็นเฉพาะข้อมูลของตนเอง';
@@ -3351,6 +3359,7 @@ function startSession(u){
   if (!DASH_STARTED){ DASH_STARTED = true; load(); }
 }
 var DASH_STARTED = false;
+function isAdmin(){ return !!(SESSION && SESSION.admin); }
 
 /* ── เปลี่ยนรหัสผ่าน ───────────────────────────────────────── */
 function pwMsg(t,cls){ var m=gid('pwMsg'); m.className='msg'+(cls?' '+cls:''); m.textContent=t; if(!t) m.style.display='none'; }
