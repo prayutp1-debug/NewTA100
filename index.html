@@ -189,6 +189,9 @@ body.locked header, body.locked .wrap{display:none !important}
   box-shadow:0 20px 50px rgba(15,23,42,.32)}
 #fgmodal h3,#pwmodal h3{margin:0 0 4px;font-size:18px;font-weight:700}
 #fgmodal .sub,#pwmodal .sub{margin:0 0 16px;font-size:12.5px;color:var(--ink-3);line-height:1.6}
+#loadNote{margin:0 0 12px;padding:10px 14px;border-radius:12px;background:#eaf3ff;
+  border:1px solid #b9d3f5;color:#1e3a8a;font-size:13px;line-height:1.75}
+#loadNote b{color:#1e40af}
 .pwbtns{display:flex;gap:9px;margin-top:14px}
 .btn-ghost{flex:1;background:#fff;border:1px solid var(--rule);border-radius:10px;padding:11px;
   cursor:pointer;color:#334155}
@@ -291,6 +294,7 @@ body.locked header, body.locked .wrap{display:none !important}
 </header>
 
 <div class="wrap">
+  <div id="loadNote" hidden></div>
   <div class="filters" id="filters" hidden></div>
   <div id="view"></div>
 </div>
@@ -1142,7 +1146,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 55;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 56;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1276,6 +1280,7 @@ async function load(opts){
 
   let key = null;
   if (!opts.file){
+    SRC = {};
     let found = false, srcLen = 0;
     for (const cand of XLSX_CANDIDATES){
       try {
@@ -1356,6 +1361,8 @@ async function load(opts){
       : {url: XLSX_URL, size: SRC.size||0};
     const json = await computeFrom(src);
     let db = JSON.parse(json), note = "";
+    SRC.excelMonths = db.meta.months.map(m=>
+      m.label + " (" + n0(m.rows) + " แถว · ข้อมูลถึงวันที่ " + m.data_days + ")");
     /* ถ้า Excel ไม่มีเดือนเก่า ให้ดึงเดือนเก่าจากไฟล์ข้อมูลสำเร็จรูปเดิมมาต่อให้ */
     try {
       let oldDb = null;
@@ -1601,6 +1608,14 @@ function boot(db, cached){
 
   $("#overlay").hidden = true;
   $("#hd-actions").hidden = false;
+  const ln = $("#loadNote");
+  if (SRC.excelMonths){
+    ln.hidden = false;
+    ln.innerHTML = "<b>อ่านไฟล์ " + esc(SRC.name||"Excel") + " สำเร็จ</b> — พบข้อมูลใน Excel: " +
+      SRC.excelMonths.map(esc).join(" · ") +
+      (SRC.merged ? "<br>" + esc(SRC.merged.replace(/^\s*·\s*/,"")) : "") +
+      "<br>ถ้าข้อมูลถูกต้อง กดปุ่ม <b>“บันทึกไฟล์ข้อมูล”</b> มุมขวาบนเพื่อสร้างไฟล์อัปขึ้น GitHub";
+  } else ln.hidden = true;
   if (first){
     $("#btn-reload").onclick = ()=>load({force:true});
     $("#btn-pick").onclick = ()=>$("#file-input").click();
@@ -1618,9 +1633,14 @@ function boot(db, cached){
         a.href = URL.createObjectURL(blob);
         a.download = "TA100-data.zip"; a.click();
         setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-        const big = Math.max.apply(null, files.map(f=>f.data.length));
-        alert("สร้าง TA100-data.zip แล้ว มี " + files.length + " ไฟล์ (ไฟล์ใหญ่สุด " +
-              (big/1048576).toFixed(1) + " MB)\nแตก zip แล้วอัปไฟล์ข้างในขึ้น GitHub ทับของเดิม");
+        let msg = "สร้าง TA100-data.zip แล้ว มี " + files.length + " ไฟล์:\n" +
+          files.map(f=>"• " + f.name + "  (" + (f.data.length/1048576).toFixed(2) + " MB)").join("\n") +
+          "\n\nเดือนในชุดข้อมูลนี้: " + D.meta.months.map(m=>m.label).join(", ");
+        if (SRC.local) msg += "\n\nแตก zip แล้วอัปไฟล์ข้างในขึ้น GitHub ทับของเดิม";
+        else msg += "\n\n⚠ ข้อมูลชุดนี้โหลดมาจาก repo ไม่ได้อ่านจากไฟล์ Excel ในเครื่อง" +
+          "\nถ้าต้องการเพิ่มเดือนใหม่ ให้กด “ใช้ไฟล์ Excel อื่น” เลือก TA100.xlsx ก่อน " +
+          "รอจนขึ้นแถบสีฟ้า “อ่านไฟล์ … สำเร็จ” แล้วค่อยกดบันทึกอีกครั้ง";
+        alert(msg);
       } catch(e){
         alert("สร้างไฟล์ไม่สำเร็จ: " + e.message);
       }
