@@ -1146,7 +1146,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 56;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 57;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1154,7 +1154,7 @@ const JSON_CANDIDATES = ["data/TA100.json.gz", "TA100.json.gz", "data/TA100.json
 let LAST_JSON = null;
 let XLSX_URL = XLSX_CANDIDATES[0];
 let D = null, DETAIL = null, TAB = "overview", SRC = {};
-const F = {m1:"",m2:"",gb:"vendor",division:"",dept:"",sect:"",plant:"",vendor:"",tier:"",q:""};
+const F = {mo:"",m1:"",m2:"",gb:"vendor",division:"",dept:"",sect:"",plant:"",vendor:"",tier:"",q:""};
 const PAGE = {overview:1,summary:1,summaryPlant:1,score:1,scoreDay:1,reward:1,fine:1,detail:1};
 const SORT = {summary:{k:"net",d:-1},summaryPlant:{k:"net",d:-1},score:{k:"truck",d:1},scoreDay:{k:"truck",d:1},reward:{k:"net",d:-1},fine:{k:"total",d:-1},detail:{k:"day",d:1}};
 const PER = {summary:200,summaryPlant:200,score:60,scoreDay:60,reward:80,fine:60,detail:200};
@@ -1604,6 +1604,7 @@ function boot(db, cached){
   MONTHS = D.meta.months || [];
   F.m1 = MONTHS.length ? MONTHS[0].key : "";
   F.m2 = MONTHS.length ? MONTHS[MONTHS.length-1].key : "";
+  F.mo = F.m2;                         // แท็บอื่นเริ่มที่เดือนล่าสุด
   DERIVED = null;
 
   $("#overlay").hidden = true;
@@ -1659,7 +1660,7 @@ function boot(db, cached){
   TABS.forEach(([id,label])=>{
     const b = el("button",null,label);
     b.setAttribute("role","tab"); b.dataset.tab=id;
-    b.onclick = ()=>{ TAB=id; render(); };
+    b.onclick = ()=>{ TAB=id; syncFilters(); render(); };
     nav.appendChild(b);
   });
 
@@ -1670,11 +1671,17 @@ function boot(db, cached){
 }
 
 /* ── ช่วงเดือนที่เลือก ────────────────────────────────────── */
+/* แท็บภาพรวมเลือกเป็นช่วง (เดือนเริ่มต้น–สิ้นสุด) ส่วนแท็บอื่นดูได้ครั้งละ 1 เดือน */
+function activeRange(){
+  if (TAB === "overview") return [F.m1, F.m2];
+  return [F.mo, F.mo];
+}
 function rangeMonths(){
   if (!MONTHS.length) return [];
-  let a = MONTHS.findIndex(m=>m.key===F.m1), b = MONTHS.findIndex(m=>m.key===F.m2);
-  if (a < 0) a = 0;
-  if (b < 0) b = MONTHS.length-1;
+  const ar = activeRange();
+  let a = MONTHS.findIndex(m=>m.key===ar[0]), b = MONTHS.findIndex(m=>m.key===ar[1]);
+  if (a < 0) a = TAB === "overview" ? 0 : MONTHS.length-1;
+  if (b < 0) b = TAB === "overview" ? MONTHS.length-1 : a;
   if (a > b){ const t=a; a=b; b=t; }
   return MONTHS.slice(a, b+1);
 }
@@ -1692,10 +1699,12 @@ function tierOf(pct){
 }
 
 /* คำนวณคะแนน/รางวัลของทุกคันตามช่วงเดือนที่เลือก (cache ไว้จนกว่าช่วงจะเปลี่ยน) */
+let DCACHE = {};
 function derive(){
-  const key = F.m1+"→"+F.m2;
-  if (DERIVED && DERIVED.key === key) return DERIVED;
-  DERIVED = computeRange(rangeMonths());
+  const key = rangeMonths().map(m=>m.key).join("→");
+  if (!DERIVED) DCACHE = {};              // โหลดข้อมูลใหม่ = ล้าง cache ทั้งหมด
+  if (DCACHE[key]) return (DERIVED = DCACHE[key]);
+  DERIVED = DCACHE[key] = computeRange(rangeMonths());
   DERIVED.key = key;
   return DERIVED;
 }
@@ -1794,8 +1803,9 @@ function computeRange(rm){
 function buildFilters(){
   const f = $("#filters"); f.hidden=false;
   f.innerHTML = `
-    <div class="f"><label for="f-m1">เดือนเริ่มต้น</label><select id="f-m1"></select></div>
-    <div class="f"><label for="f-m2">เดือนสิ้นสุด</label><select id="f-m2"></select></div>
+    <div class="f" id="f-mo-wrap"><label for="f-mo">เดือน</label><select id="f-mo"></select></div>
+    <div class="f" id="f-m1-wrap" hidden><label for="f-m1">เดือนเริ่มต้น</label><select id="f-m1"></select></div>
+    <div class="f" id="f-m2-wrap" hidden><label for="f-m2">เดือนสิ้นสุด</label><select id="f-m2"></select></div>
     <div class="f"><label for="f-division">กิจการ</label><select id="f-division"></select></div>
     <div class="f"><label for="f-dept">ภาค</label><select id="f-dept"></select></div>
     <div class="f"><label for="f-sect">แผนก</label><select id="f-sect"></select></div>
@@ -1811,8 +1821,8 @@ function buildFilters(){
     <button class="btn" id="f-reset">ล้างตัวกรอง</button>
     <button class="btn primary" id="f-export">บันทึก Excel</button>`;
   $("#f-gb").onchange = e=>{ F.gb = e.target.value; PAGE.summary = 1; render(); };
-  ["m1","m2"].forEach(k=>{
-    $("#f-"+k).onchange = e=>{ F[k]=e.target.value; DERIVED=null; resetPages(); syncFilters(); render(); };
+  ["mo","m1","m2"].forEach(k=>{
+    $("#f-"+k).onchange = e=>{ F[k]=e.target.value; resetPages(); syncFilters(); render(); };
   });
   ["division","dept","sect","plant","vendor","tier"].forEach(k=>{
     $("#f-"+k).onchange = e=>{
@@ -1829,7 +1839,8 @@ function buildFilters(){
   $("#f-reset").onclick = ()=>{
     ["division","dept","sect","plant","vendor","tier","q"].forEach(k=>F[k]="");
     F.m1 = MONTHS.length?MONTHS[0].key:""; F.m2 = MONTHS.length?MONTHS[MONTHS.length-1].key:"";
-    $("#f-q").value=""; DERIVED=null;
+    F.mo = F.m2;
+    $("#f-q").value="";
     resetPages(); syncFilters(); render();
   };
   $("#f-export").onclick = exportXLSX;
@@ -1837,14 +1848,15 @@ function buildFilters(){
 const resetPages = ()=>{Object.keys(PAGE).forEach(k=>PAGE[k]=1);Object.assign(PER,PER0);};
 
 function syncFilters(){
-  const opts = (id, vals, cur, all)=>{
+  const opts = (id, vals, cur, all, key)=>{
     const s = $("#"+id); if(!s) return;
     const v = vals.filter(Boolean).sort((a,b)=>a.localeCompare(b,"th"));
+    if (key && cur && !v.includes(cur)) F[key] = "";   // ค่าที่เลือกไว้ไม่มีในเดือนนี้ — ล้างให้ตรงกับที่เห็น
     s.innerHTML = `<option value="">${all}</option>` +
       v.map(x=>`<option value="${esc(x)}"${x===cur?" selected":""}>${esc(x)}</option>`).join("");
     s.value = v.includes(cur) ? cur : "";
   };
-  ["m1","m2"].forEach(k=>{
+  ["mo","m1","m2"].forEach(k=>{
     const s = $("#f-"+k); if(!s) return;
     s.innerHTML = MONTHS.map(m=>`<option value="${esc(m.key)}"${m.key===F[k]?" selected":""}>${esc(m.label)}</option>`).join("");
     s.value = F[k];
@@ -1852,15 +1864,15 @@ function syncFilters(){
   });
   const t = derive().trucks;
   const uniq = (arr,k)=>[...new Set(arr.map(x=>x[k]))];
-  opts("f-division", uniq(t,"division"), F.division, "ทุกกิจการ");
+  opts("f-division", uniq(t,"division"), F.division, "ทุกกิจการ", "division");
   const a = F.division? t.filter(x=>x.division===F.division):t;
-  opts("f-dept", uniq(a,"dept"), F.dept, "ทุกภาค");
+  opts("f-dept", uniq(a,"dept"), F.dept, "ทุกภาค", "dept");
   const b = F.dept? a.filter(x=>x.dept===F.dept):a;
-  opts("f-sect", uniq(b,"sect"), F.sect, "ทุกแผนก");
+  opts("f-sect", uniq(b,"sect"), F.sect, "ทุกแผนก", "sect");
   const c = F.sect? b.filter(x=>x.sect===F.sect):b;
-  opts("f-plant", uniq(c,"plant"), F.plant, "ทุกโรงงาน");
+  opts("f-plant", uniq(c,"plant"), F.plant, "ทุกโรงงาน", "plant");
   const d = F.plant? c.filter(x=>x.plant===F.plant):c;
-  opts("f-vendor", uniq(d,"vendor"), F.vendor, "ทุกผู้รับเหมา");
+  opts("f-vendor", uniq(d,"vendor"), F.vendor, "ทุกผู้รับเหมา", "vendor");
   opts("f-tier", D.tiers.map(x=>x.name), F.tier, "ทุกกลุ่ม");
 }
 
@@ -1950,6 +1962,10 @@ function render(){
     b.setAttribute("aria-selected", b.dataset.tab===TAB));
   $("#filters").hidden = (TAB==="rules");
   const gw = $("#f-gb-wrap"); if(gw) gw.hidden = (TAB!=="summary");
+  const ov = (TAB === "overview");
+  [["f-mo-wrap",ov],["f-m1-wrap",!ov],["f-m2-wrap",!ov]].forEach(([id,h])=>{
+    const e = $("#"+id); if(e) e.hidden = h;
+  });
   const v = $("#view"); v.innerHTML="";
   ({overview:vOverview,summary:vSummary,summaryPlant:vSummary,score:vScore,scoreDay:vScore,reward:vReward,fine:vFine,detail:vDetail,rules:vRules}[TAB])(v);
 }
@@ -2802,7 +2818,9 @@ function vRules(root){
     แต่ถ้าคะแนนทั้งเดือนตกอยู่กลุ่ม <b>TA 5 (−3 บาท/คิว)</b> หรือ <b>TA 6 (−6 บาท/คิว)</b>
     ยังต้องถูกหักตามอัตรานั้น และ<b>ยังมีสิทธิ์ได้เงินการันตี</b>ถ้าคะแนนผ่านเกณฑ์</p>
 
-    <p style="margin:10px 0 0">เมื่อเลือกช่วงมากกว่า 1 เดือน ระบบจะรวมคะแนนและคิวของทุกเดือนในช่วง
+    <p style="margin:10px 0 0">ทุกแท็บยกเว้นภาพรวม ดูข้อมูลได้ครั้งละ <b>1 เดือน</b> (เลือกที่ช่อง “เดือน”)
+    ส่วนแท็บ <b>ภาพรวม</b> เลือกเป็นช่วงได้ด้วย “เดือนเริ่มต้น – เดือนสิ้นสุด”
+    เมื่อเลือกช่วงมากกว่า 1 เดือน ระบบจะรวมคะแนนและคิวของทุกเดือนในช่วง
     แล้วคิด %TA จากวันทำงานรวมของช่วงนั้น ส่วนยอดการันตีจะรวมฐานการันตีของทุกเดือนในช่วง
     แล้วคูณ %การันตีตามกลุ่ม TA ที่ได้</p>`;
   const p3 = panel("วิธีคิดคะแนน","", how);
@@ -3148,7 +3166,8 @@ function exportXLSX(){
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([buf],
         {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
-      a.download = `TA_${spec.name}_${F.m1}${F.m1!==F.m2?"_"+F.m2:""}.xlsx`;
+      const ar = activeRange();
+      a.download = `TA_${spec.name}_${ar[0]}${ar[0]!==ar[1]?"_"+ar[1]:""}.xlsx`;
       a.click();
       setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
       $("#overlay").hidden = true;
