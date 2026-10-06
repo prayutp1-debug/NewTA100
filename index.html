@@ -241,12 +241,12 @@ body.locked header, body.locked .wrap{display:none !important}
       <label class="check"><input type="checkbox" id="remember"> จำการเข้าสู่ระบบ</label>
       <span style="font-size:12px;color:var(--ink-3)" id="userStat">กำลังโหลดรายชื่อผู้ใช้…</span>
     </div>
-    <button class="btn-primary" id="loginBtn" type="submit">เข้าสู่ระบบ</button>
+    <div class="msg" id="loginMsg"></div>
+    <button class="btn-primary" id="loginBtn" type="submit" style="margin-top:12px">เข้าสู่ระบบ</button>
     <div style="display:flex;gap:14px;justify-content:center;margin-top:11px">
       <button type="button" class="linkbtn" id="pwOpenLogin" style="margin:0">เปลี่ยนรหัสผ่าน</button>
       <button type="button" class="linkbtn" id="fgOpen" style="margin:0">ลืมรหัสผ่าน?</button>
     </div>
-    <div class="msg" id="loginMsg"></div>
   </form>
 </div>
 
@@ -1146,7 +1146,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 58;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 59;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -3320,7 +3320,7 @@ function api(params){
 /* ── เข้าสู่ระบบ ───────────────────────────────────────────── */
 function setMsg(t,cls){
   var m=gid('loginMsg'); m.className='msg'+(cls?' '+cls:''); m.textContent=t;
-  if(!t) m.style.display='none';
+  m.style.display = t ? '' : 'none';
 }
 function rememberCreds(u,p){
   if(gid('remember').checked){
@@ -3332,16 +3332,22 @@ function localFind(u,p){
 }
 /* ตรวจรหัสผ่าน: ใช้ Apps Script ก่อน ถ้าเรียกไม่ได้จึงเทียบกับรายชื่อที่โหลดไว้ */
 function verifyLogin(u,p){
-  if(!API_URL) return Promise.resolve({ok:!!localFind(u,p), local:true, hit:localFind(u,p)});
+  if(!API_URL){ var h0=localFind(u,p); return Promise.resolve({ok:!!h0, local:true, hit:h0, via:'sheet'}); }
   return api({action:'login',user:u,pass:p}).then(function(res){
     if(res&&res.ok) return {ok:true, hit:{name:res.name||res.user||u, user:res.user||u, pass:p, status:res.status||''}};
-    if(res&&res.error==='invalid') return {ok:false, message:res.message};
+    if(res&&res.error==='invalid') return {ok:false, via:'api', message:res.message};
     var hit=localFind(u,p);
-    return {ok:!!hit, hit:hit, message:(res&&res.message)||''};
+    return {ok:!!hit, hit:hit, via:'sheet', message:(res&&res.message)||''};
   }).catch(function(){
     var hit=localFind(u,p);
-    return {ok:!!hit, hit:hit, local:true};
+    return {ok:!!hit, hit:hit, local:true, via:'offline'};
   });
+}
+/* คำอธิบายสั้น ๆ ว่าใครเป็นผู้ปฏิเสธ (ไม่เปิดเผยรหัสผ่านหรือรายชื่อผู้ใช้) */
+function loginWhy(via){
+  if (via === 'api')     return 'ผลตรวจจาก Apps Script (ฐานข้อมูลผู้ใช้กลาง): ชื่อผู้ใช้และรหัสผ่านที่พิมพ์ไม่ตรงกับที่บันทึกไว้';
+  if (via === 'offline') return 'เรียก Apps Script ไม่ได้ จึงเทียบกับรายชื่อในกูเกิลชีตแทน และไม่พบคู่ชื่อผู้ใช้/รหัสผ่านนี้';
+  return 'Apps Script ไม่ยืนยัน และไม่พบคู่ชื่อผู้ใช้/รหัสผ่านนี้ในกูเกิลชีต';
 }
 function startSession(u){
   SESSION={ name:u.name||u.user, code:u.user, status:u.status, all:/SCG/.test(u.status||'') };
@@ -3362,7 +3368,7 @@ var DASH_STARTED = false;
 function isAdmin(){ return !!(SESSION && SESSION.admin); }
 
 /* ── เปลี่ยนรหัสผ่าน ───────────────────────────────────────── */
-function pwMsg(t,cls){ var m=gid('pwMsg'); m.className='msg'+(cls?' '+cls:''); m.textContent=t; if(!t) m.style.display='none'; }
+function pwMsg(t,cls){ var m=gid('pwMsg'); m.className='msg'+(cls?' '+cls:''); m.textContent=t; m.style.display = t ? '' : 'none'; }
 function openPw(){
   gid('pwUser').value = SESSION? SESSION.code : gid('u').value.trim();
   gid('pwOld').value=''; gid('pwNew').value=''; gid('pwNew2').value='';
@@ -3417,7 +3423,9 @@ function hint(id, text, cls){
 function capsNote(){ return CAPS_ON ? '  ⚠ Caps Lock เปิดอยู่' : ''; }
 
 /* หน้า login */
+var PW_FAIL = false;   // หลังล็อกอินไม่ผ่าน ให้ข้อความสีแดงค้างไว้จนกว่าจะพิมพ์รหัสใหม่
 function loginHint(){
+  if (PW_FAIL) return;
   var v = gid('p').value;
   if(!v) return hint('pHint', CAPS_ON ? '⚠ Caps Lock เปิดอยู่ — ระวังตัวพิมพ์ใหญ่/เล็ก' : 'กรอกรหัสผ่านแล้วกดปุ่มเข้าสู่ระบบ', CAPS_ON?'warn':'');
   hint('pHint', 'พิมพ์แล้ว ' + v.length + ' ตัวอักษร' + capsNote(), CAPS_ON?'warn':'');
@@ -3448,7 +3456,7 @@ function watchPw(){
     ['input','keyup','keydown','focus'].forEach(function(ev){
       el.addEventListener(ev,function(e){
         if(e.getModifierState) CAPS_ON = e.getModifierState('CapsLock');
-        if(id==='p') loginHint(); else pwValidate();
+        if(id==='p'){ if(e.type==='input') PW_FAIL=false; loginHint(); } else pwValidate();
       });
     });
   });
@@ -3618,12 +3626,15 @@ function authBoot(){
     var u=gid('u').value.trim(), p=gid('p').value;
     if(!USERS.length&&!API_URL){ setMsg('ยังโหลดรายชื่อผู้ใช้ไม่สำเร็จ','err'); return; }
     if(!p){ hint('pHint','กรุณากรอกรหัสผ่าน','bad'); gid('p').focus(); return; }
+    PW_FAIL=false;
     gid('loginBtn').disabled=true; gid('loginBtn').textContent='กำลังตรวจสอบ…'; setMsg('','');
     hint('pHint','กำลังตรวจสอบรหัสผ่าน…','');
     verifyLogin(u,p).then(function(r){
       gid('loginBtn').disabled=false; gid('loginBtn').textContent='เข้าสู่ระบบ';
       if(!r.ok||!r.hit){
-        setMsg(r.message||'ผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง','err');
+        setMsg((r.message||'ผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง') + '\n' + loginWhy(r.via),'err');
+        gid('loginMsg').style.whiteSpace='pre-line';
+        PW_FAIL = true;
         gid('p').focus(); gid('p').select();
         hint('pHint','รหัสผ่านไม่ถูกต้อง — กดรูปดวงตาเพื่อดูสิ่งที่พิมพ์'+capsNote(),'bad');
         return;
