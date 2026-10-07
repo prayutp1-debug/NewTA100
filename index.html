@@ -1146,7 +1146,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 60;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 61;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1795,7 +1795,7 @@ function computeRange(rm){
 
   /* คอลัมน์วันของตารางคะแนน */
   const cols = [];
-  rm.forEach(m=>{ for(let d=1; d<=m.days_in_month; d++) cols.push({ym:m.key, day:d, label:m.label}); });
+  rm.forEach(m=>{ for(let d=1; d<=shownDays(m); d++) cols.push({ym:m.key, day:d, label:m.label}); });
 
   return {months:rm, keys, workDays, trucks, drivers, cols, allow};
 }
@@ -2387,7 +2387,7 @@ function vScore(root){
     const hr0 = el("tr");
     const sp = el("th"); sp.colSpan = 1 + ORG.length; sp.className = "sticky-l"; hr0.appendChild(sp);
     der.months.forEach(m=>{
-      const th = el("th","c",m.label); th.colSpan = m.days_in_month; hr0.appendChild(th);
+      const th = el("th","c",m.label); th.colSpan = shownDays(m); hr0.appendChild(th);
     });
     hr0.appendChild(el("th")); hr0.appendChild(el("th")); hr0.appendChild(el("th"));
     thead.appendChild(hr0);
@@ -2538,6 +2538,9 @@ function vReward(root){
     `${n0(list.length)} คัน · ${rangeLabel()}`, tb, pager("reward",list.length,PER.reward)));
 }
 
+/* จำนวนวันที่แสดงเป็นคอลัมน์ = วันล่าสุดที่มีข้อมูลจริง (ไม่เกินวันในเดือน) */
+function shownDays(m){ return Math.min(m.days_in_month, m.data_days||m.days_in_month); }
+
 /* ── 4. หักเงิน จบส. ──────────────────────────────────────── */
 function vFine(root){
   const der = derive(), cols = der.cols, multi = der.months.length > 1;
@@ -2552,7 +2555,7 @@ function vFine(root){
   if (multi){
     const hr0 = el("tr");
     const sp = el("th"); sp.colSpan = 1 + ORG.length; sp.className="sticky-l"; hr0.appendChild(sp);
-    der.months.forEach(m=>{ const th=el("th","c",m.label); th.colSpan=m.days_in_month; hr0.appendChild(th); });
+    der.months.forEach(m=>{ const th=el("th","c",m.label); th.colSpan=shownDays(m); hr0.appendChild(th); });
     hr0.appendChild(el("th"));
     thead.appendChild(hr0);
   }
