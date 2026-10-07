@@ -321,7 +321,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 37;
+var ENGINE_VERSION = 38;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -782,7 +782,7 @@ function buildDB(sheets, report){
         if (edited && hasReason){
           /* โรงงานแก้ไขให้ (device = W) และระบุเหตุผลไว้ — ไม่หักคะแนน */
           lateFixed = true; ctStat = "plant_ok";
-        } else if (!edited && hasReason){
+        } else {   // ใช้สิทธิ์พัก 13 ชม. จากดีพีใบสุดท้ายวันก่อน ทุกกรณี (ไม่ว่า device เป็น W หรือมีเหตุผลหรือไม่)
           /* Punch ด้วย SDA ทั้งสองฝั่ง แต่โรงงานระบุเหตุผลเพิ่มให้
              ใช้สิทธิ์พัก REST_HOURS ชม. จากดีพีใบสุดท้ายของวันก่อนมาเทียบแทน */
           var prev = timeSecs(cell(p,iPrev));
@@ -790,14 +790,12 @@ function buildDB(sheets, report){
           var dl2 = Math.max(deadline, rest);
           if (Math.floor((day*86400 + ct)/60) > Math.floor(dl2/60)){
             dCt = DED_LATE; ctStat = "late_shift";
-            note = "ตรวจรถหลังพักครบ " + REST_HOURS + " ชม. (ได้ถึง " +
+            note = (prev == null) ? "ตรวจรถเกิน " + LATE_GRACE_MIN + " นาทีไม่ทันเวลาเข้างาน"
+                 : "ตรวจรถเกิน " + LATE_GRACE_MIN + " นาทีไม่ทันเวลาเข้างาน และเกินสิทธิ์พัก " + REST_HOURS + " ชม. (ได้ถึง " +
                    hhmm(dl2 % 86400) + " แต่ตรวจรถ " + hhmm(ct) + ")";
           } else {
-            lateFixed = true; ctStat = "rest_ok";
+            lateFixed = !edited; ctStat = "rest_ok";   // device W ยังคงถูกหักเรื่องไม่ใช้ SDA ตามเดิม
           }
-        } else {
-          dCt = DED_LATE; ctStat = "late_shift";
-          note = "ตรวจรถเกิน " + LATE_GRACE_MIN + " นาทีไม่ทันเวลาเข้างาน";
         }
       }
     }
@@ -1146,7 +1144,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 61;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 62;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
