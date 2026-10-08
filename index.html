@@ -1144,7 +1144,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 62;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 63;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1974,7 +1974,7 @@ function vOverview(root){
   const t = trucks();
   kpiStrip(t);
   if(!t.length){ root.appendChild(el("div","empty",emptyMsg("รถ"))); return; }
-  const g = el("div","grid");
+  const g = el("div","grid"); const PN = {};
 
   /* 1a. การกระจายกลุ่ม TA (ภาพรวม) */
   const cnt = {}; t.forEach(x=>cnt[x.tier]=(cnt[x.tier]||0)+1);
@@ -1992,7 +1992,7 @@ function vOverview(root){
   const p1 = panel("การกระจายกลุ่ม TA", `${n0(t.length)} คัน · ${rangeLabel()}`, bars);
   p1.querySelector(".scroll").style.maxHeight="none";
   p1.style.gridColumn = "1 / -1";
-  g.appendChild(p1);
+  PN.dist=p1;
 
   /* 1b. กลุ่ม TA แยกรายกิจการ (แนวเดียวกับกราฟด้านบน) */
   const byDiv = {};
@@ -2029,7 +2029,7 @@ function vOverview(root){
   const p1b = panel("กลุ่ม TA แยกรายกิจการ", "สัดส่วนรถในแต่ละกลุ่ม · " + rangeLabel(), dv);
   p1b.querySelector(".scroll").style.maxHeight="none";
   p1b.style.gridColumn = "1 / -1";
-  g.appendChild(p1b);
+  PN.divTier=p1b;
 
   /* 1c. เงินรางวัลรายผู้รับเหมา */
   const byVen = {};
@@ -2075,7 +2075,7 @@ function vOverview(root){
   const p1c = panel("เงินรางวัล TA100 รายผู้รับเหมา", `${rangeLabel()} · หน่วยบาท`, vb);
   p1c.querySelector(".scroll").style.maxHeight="none";
   p1c.style.gridColumn = "1 / -1";
-  g.appendChild(p1c);
+  PN.vendor=p1c;
 
   /* 1d. สรุปตามกิจการ — คอลัมน์ชุดเดียวกับแท็บสรุปโครงการ (ไม่มี Vendor / บริษัทคู่ธุรกิจ) */
   const divRows = summaryRows(GB.division).sort((a,b)=>b.net-a.net);
@@ -2105,7 +2105,7 @@ function vOverview(root){
   tb.appendChild(tbody);
   const p2 = panel("สรุปตามกิจการ", rangeLabelTH(), tb);
   p2.style.gridColumn="1 / -1";
-  g.appendChild(p2);
+  PN.div=p2;
 
   /* 1d-2. สรุปรายเดือน + กราฟเปรียบเทียบ */
   const MON_COLS = [["incentive","รางวัล Incentive"],["guarantee","การันตี"],
@@ -2140,7 +2140,7 @@ function vOverview(root){
     pm.querySelector(".scroll").style.maxHeight = "none";
     pm.appendChild(monthChart(monRows, MON_COLS, MON_COLOR));
     pm.style.gridColumn = "1 / -1";
-    g.appendChild(pm);
+    PN.month=pm;
   }
 
   /* 1e. รถที่ต้องตามแก้ */
@@ -2158,8 +2158,10 @@ function vOverview(root){
     wb.appendChild(r);
   });
   wt.appendChild(wb);
-  g.appendChild(panel("15 คันที่ %TA ต่ำที่สุด","เสี่ยงโดนหักเงินรางวัล", wt));
+  PN.worst = panel("15 คันที่ %TA ต่ำที่สุด","เสี่ยงโดนหักเงินรางวัล", wt);
 
+  /* ลำดับบล็อก: กิจการ → รางวัลรายเดือน+กราฟ → 15 คัน %TA ต่ำสุด → รายผู้รับเหมา → กระจายกลุ่ม TA → กลุ่ม TA รายกิจการ */
+  ["div","month","worst","vendor","dist","divTier"].forEach(k=>{ if(PN[k]) g.appendChild(PN[k]); });
   root.appendChild(g);
 }
 
