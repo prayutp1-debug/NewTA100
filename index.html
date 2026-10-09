@@ -1144,7 +1144,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 63;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 64;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1152,6 +1152,7 @@ const JSON_CANDIDATES = ["data/TA100.json.gz", "TA100.json.gz", "data/TA100.json
 let LAST_JSON = null;
 let XLSX_URL = XLSX_CANDIDATES[0];
 let D = null, DETAIL = null, TAB = "overview", SRC = {};
+const RM = {a:"", b:""};   // ช่วงเดือนของบล็อก "สรุปรางวัลรายเดือน"
 const F = {mo:"",m1:"",m2:"",gb:"vendor",division:"",dept:"",sect:"",plant:"",vendor:"",tier:"",q:""};
 const PAGE = {overview:1,summary:1,summaryPlant:1,score:1,scoreDay:1,reward:1,fine:1,detail:1};
 const SORT = {summary:{k:"net",d:-1},summaryPlant:{k:"net",d:-1},score:{k:"truck",d:1},scoreDay:{k:"truck",d:1},reward:{k:"net",d:-1},fine:{k:"total",d:-1},detail:{k:"day",d:1}};
@@ -1672,8 +1673,7 @@ function boot(db, cached){
 /* ── ช่วงเดือนที่เลือก ────────────────────────────────────── */
 /* แท็บภาพรวมเลือกเป็นช่วง (เดือนเริ่มต้น–สิ้นสุด) ส่วนแท็บอื่นดูได้ครั้งละ 1 เดือน */
 function activeRange(){
-  if (TAB === "overview") return [F.m1, F.m2];
-  return [F.mo, F.mo];
+  return [F.mo, F.mo];      // ทุกแท็บรวมภาพรวม เลือกได้ครั้งละ 1 เดือน
 }
 function rangeMonths(){
   if (!MONTHS.length) return [];
@@ -1961,8 +1961,7 @@ function render(){
     b.setAttribute("aria-selected", b.dataset.tab===TAB));
   $("#filters").hidden = (TAB==="rules");
   const gw = $("#f-gb-wrap"); if(gw) gw.hidden = (TAB!=="summary");
-  const ov = (TAB === "overview");
-  [["f-mo-wrap",ov],["f-m1-wrap",!ov],["f-m2-wrap",!ov]].forEach(([id,h])=>{
+  [["f-mo-wrap",false],["f-m1-wrap",true],["f-m2-wrap",true]].forEach(([id,h])=>{
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
@@ -2112,7 +2111,13 @@ function vOverview(root){
                     ["deduct","รายการหัก"],["fine","หักเงิน จบส."],["net","คงเหลือรางวัลสุทธิ"]];
   const MON_COLOR = {incentive:"#10b981", guarantee:"#2563eb", deduct:"#f97316",
                      fine:"#a855f7", net:"#4338ca"};
-  const monRows = derive().months.map(m=>{
+  /* ช่วงเดือนของบล็อกนี้เลือกแยกได้ (ค่าเริ่มต้น = ทุกเดือนที่มี) */
+  if (!MONTHS.some(m=>m.key===RM.a)) RM.a = MONTHS[0].key;
+  if (!MONTHS.some(m=>m.key===RM.b)) RM.b = MONTHS[MONTHS.length-1].key;
+  let ia = MONTHS.findIndex(m=>m.key===RM.a), ib = MONTHS.findIndex(m=>m.key===RM.b);
+  if (ia > ib){ const tt=ia; ia=ib; ib=tt; }
+  const monMonths = MONTHS.slice(ia, ib+1);
+  const monRows = monMonths.map(m=>{
     const o = summaryRows(GB.month, [m.key])[0] ||
               {incentive:0,guarantee:0,deduct:0,fine:0,net:0};
     return Object.assign({label:thMonth(m), key:m.key}, o);
@@ -2136,10 +2141,19 @@ function vOverview(root){
       mb.appendChild(tr4);
     }
     mt.appendChild(mb);
-    const pm = panel("สรุปรางวัลรายเดือน", rangeLabelTH(), mt);
+    const pm = panel("สรุปรางวัลรายเดือน", monMonths.length===1 ? thMonth(monMonths[0]) : thMonth(monMonths[0])+" – "+thMonth(monMonths[monMonths.length-1]), mt);
     pm.querySelector(".scroll").style.maxHeight = "none";
     pm.appendChild(monthChart(monRows, MON_COLS, MON_COLOR));
     pm.style.gridColumn = "1 / -1";
+    const rc = el("div"); rc.style.cssText = "display:flex;gap:12px;flex-wrap:wrap;align-items:end;padding:10px 13px;border-bottom:1px solid #e5e7eb";
+    [["เดือนเริ่มต้น","a"],["เดือนสิ้นสุด","b"]].forEach(([lb,k])=>{
+      const w = el("div","f"); w.appendChild(el("label",null,lb));
+      const sel = el("select");
+      MONTHS.forEach(m=>{ const o=el("option",null,m.label); o.value=m.key; if(m.key===RM[k]) o.selected=true; sel.appendChild(o); });
+      sel.onchange = ()=>{ RM[k]=sel.value; render(); };
+      w.appendChild(sel); rc.appendChild(w);
+    });
+    pm.insertBefore(rc, pm.firstElementChild ? pm.firstElementChild.nextSibling : null);
     PN.month=pm;
   }
 
