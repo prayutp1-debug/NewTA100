@@ -321,7 +321,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 38;
+var ENGINE_VERSION = 39;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -353,10 +353,14 @@ function cell(row, i){ return (i < 0 || !row) ? null : row[i]; }
 
 function excelDate(v){
   if (typeof v === "number"){
+    if (v < 1) return null;                 // 0 = ช่องว่าง/เวลา 00:00 ไม่ใช่วันที่จริง (จะกลายเป็น 1899-12-30)
     var t = new Date(Date.UTC(1899,11,30) + Math.round(v) * 86400000);
     return {y:t.getUTCFullYear(), m:t.getUTCMonth()+1, d:t.getUTCDate()};
   }
-  if (v instanceof Date) return {y:v.getFullYear(), m:v.getMonth()+1, d:v.getDate()};
+  if (v instanceof Date){
+    if (v.getFullYear() < 1950) return null;
+    return {y:v.getFullYear(), m:v.getMonth()+1, d:v.getDate()};
+  }
   var s = S(v); if (!s) return null;
   var m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (m) return {y:+m[1], m:+m[2], d:+m[3]};
@@ -658,6 +662,7 @@ function buildDB(sheets, report){
         gt: gt ? ymKey(gt.y,gt.m)+"-"+(gt.d<10?"0":"")+gt.d : null,
         gt_ym: gt ? gt.y*12 + gt.m : null
       };
+      if (!info.gt && regAny[tn] && regAny[tn].gt){ info.gt = regAny[tn].gt; info.gt_ym = regAny[tn].gt_ym; }
       regAny[tn] = info;
       var ry = +cell(er,eY), rm = MONTH_EN.indexOf(S(cell(er,eM))) + 1;
       if (ry && rm){
@@ -1144,7 +1149,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 64;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 66;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1922,6 +1927,8 @@ function panel(title, sub, body, footer){
   if(footer) p.appendChild(footer);
   return p;
 }
+/* YYYY-MM-DD -> DD-MM-YYYY */
+function fmtDMY(g){ const m = g && /^(\d{4})-(\d{2})-(\d{2})$/.exec(g); return m ? m[3]+"-"+m[2]+"-"+m[1] : (g||""); }
 function pager(tab, total, per){
   const pages = Math.max(1, Math.ceil(total/per));
   if(PAGE[tab]>pages) PAGE[tab]=pages;
@@ -2502,8 +2509,8 @@ function vReward(root){
     if(x.spare) ac.className += " neg";
     tr.appendChild(ac);
     const f = el("td","c",x.fleet);
-    if(x.fleet==="T012") f.title = x.gt_ok? `รถใหม่ GT ถึง ${x.gt} — ใช้ฐานการันตีที่มากกว่าระหว่างรถเก่ากับ T012`
-                                          : `GT หมดอายุ ${x.gt} — ใช้เกณฑ์การันตีรถเก่า`;
+    if(x.fleet==="T012") f.title = x.gt_ok? `รถใหม่ GT ถึง ${fmtDMY(x.gt)} — ใช้ฐานการันตีที่มากกว่าระหว่างรถเก่ากับ T012`
+                                          : `GT หมดอายุ ${fmtDMY(x.gt)} — ใช้เกณฑ์การันตีรถเก่า`;
     tr.appendChild(f);
     tr.appendChild(el("td","n",nf(x.score)));
     tr.appendChild(el("td","n",nf(x.qty)));
@@ -3010,7 +3017,7 @@ function sheetSpec(){
       ...orgCols,
       {l:"รถบัญชี", t:"str", w:13, align:"center", f:x=>x.acct},
       {l:"FLEET_TYPE_NO", t:"str", w:14, align:"center", f:x=>x.fleet},
-      {l:"วันหมดอายุ GT", t:"str", w:14, align:"center", f:x=>x.gt||""},
+      {l:"วันหมดอายุ GT", t:"str", w:14, align:"center", f:x=>fmtDMY(x.gt)},
       {l:"คะแนนรวม", t:"num2", w:11, f:x=>x.score},
       {l:"คิวรวม", t:"num2", w:11, f:x=>x.qty},
       {l:"รายได้ค่าขนส่ง", t:"money", w:15, f:x=>x.revenue},
