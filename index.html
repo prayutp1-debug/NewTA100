@@ -1150,7 +1150,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 67;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 68;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1768,7 +1768,7 @@ function computeRange(rm){
     trucks.push({
       truck:t.truck, division:t.division, dept:t.dept, sect:t.sect,
       plant_no:t.plant_no, plant:t.plant, cc:t.cc||"", vendor:t.vendor, vendor_id:t.vendor_id,
-      fleet:t.fleet, size:t.size, gt:t.gt,
+      fleet:t.fleet, size:t.size, gt:t.gt, t0ta, g_month:+gFull.toFixed(2),
       acct:t.acct||"", acct_raw:t.acct_raw||"", spare,
       gt_ok: t.fleet === "T012" && t.gt_ym != null && t.gt_ym >= lastYM,
       g_missing: gMissing,
@@ -2486,7 +2486,7 @@ function vReward(root){
   const cols = [
     ["truck","เบอร์รถ","t"],["division","กิจการ","t"],["dept","ภาค","t"],["sect","แผนก","t"],
     ["plant","โรงงาน","t"],["vendor","ผู้รับเหมา","t"],["acct","รถบัญชี","c"],["fleet","FLEET_TYPE_NO","c"],
-    ["score","คะแนนรวม","n"],["qty","คิวรวม","n"],["revenue","รายได้ค่าขนส่ง","n"],
+    ["g_month","การันตี","n"],["score","คะแนนรวม","n"],["qty","คิวรวม","n"],["revenue","รายได้ค่าขนส่ง","n"],
     ["pct","%TA","n"],["tier","กลุ่ม TA","c"],["inc_rate","อัตรา (บาท/คิว)","n"],
     ["incentive","เงินรางวัล","n"],["g_base","ฐานการันตี","n"],["g_pct","%การันตี","n"],
     ["g_amount","ยอดการันตี","n"],["g_topup","ส่วนต่างการันตี","n"],
@@ -2515,6 +2515,11 @@ function vReward(root){
     if(x.fleet==="T012") f.title = x.gt_ok? `รถใหม่ GT ถึง ${fmtDMY(x.gt)} — ใช้ฐานการันตีที่มากกว่าระหว่างรถเก่ากับ T012`
                                           : `GT หมดอายุ ${fmtDMY(x.gt)} — ใช้เกณฑ์การันตีรถเก่า`;
     tr.appendChild(f);
+    const gm = el("td","n"+((x.spare||x.t0ta)?" neg":""), nf(x.g_month,2));
+    if(x.spare) gm.title = "รถเสริม — ไม่มีสิทธิ์ได้การันตี";
+    else if(x.t0ta) gm.title = "FLEET_TYPE_NO = T0TA — ไม่มีสิทธิ์ได้การันตี";
+    else if(x.g_missing) gm.title = "ไม่พบโรงงานนี้ในชีตการันตี";
+    tr.appendChild(gm);
     tr.appendChild(el("td","n",nf(x.score)));
     tr.appendChild(el("td","n",nf(x.qty)));
     tr.appendChild(el("td","n",nf(x.revenue)));
@@ -2550,7 +2555,7 @@ function vReward(root){
   const s = {qty:0,revenue:0,incentive:0,g_amount:0,g_topup:0,penalty:0,net:0,score:0};
   list.forEach(x=>Object.keys(s).forEach(k=>s[k]+=x[k]));
   const tr = el("tr"); tr.style.fontWeight="600"; tr.style.background="#eef2fb";
-  tr.innerHTML = `<td class="sticky-l">รวม ${n0(list.length)} คัน</td><td colspan="7"></td>
+  tr.innerHTML = `<td class="sticky-l">รวม ${n0(list.length)} คัน</td><td colspan="8"></td>
     <td class="n">${nf(s.score)}</td><td class="n">${nf(s.qty)}</td><td class="n">${nf(s.revenue)}</td>
     <td colspan="3"></td><td class="n ${s.incentive<0?"neg":""}">${nf(s.incentive)}</td>
     <td colspan="2"></td><td class="n">${nf(s.g_amount)}</td><td class="n">${nf(s.g_topup)}</td>
@@ -3020,6 +3025,8 @@ function sheetSpec(){
       ...orgCols,
       {l:"รถบัญชี", t:"str", w:13, align:"center", f:x=>x.acct},
       {l:"FLEET_TYPE_NO", t:"str", w:14, align:"center", f:x=>x.fleet},
+      {l:"การันตี", t:"money", w:13, f:x=>x.g_month,
+       note:x=>x.spare ? "รถเสริม — ไม่มีสิทธิ์ได้การันตี" : (x.t0ta ? "FLEET_TYPE_NO = T0TA — ไม่มีสิทธิ์ได้การันตี" : "")},
       {l:"วันหมดอายุ GT", t:"str", w:14, align:"center", f:x=>fmtDMY(x.gt)},
       {l:"คะแนนรวม", t:"num2", w:11, f:x=>x.score},
       {l:"คิวรวม", t:"num2", w:11, f:x=>x.qty},
