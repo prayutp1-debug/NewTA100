@@ -321,7 +321,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 39;
+var ENGINE_VERSION = 40;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -409,6 +409,7 @@ function moveKind(inRmk, outRmk){
 /* หมายเหตุที่ถือว่าเป็นการลางาน — หัก 0.5 คะแนน และไม่หักเรื่องอุปกรณ์ */
 var LEAVE_RE = /ลา(งาน|ป่วย|กิจ|คลอด|บวช|ครึ่งวัน|ช่วง|ระหว่าง|ไป|จริง|ญาติ)|ลาพักร้อน|ขอลา|แจ้งลา/;
 var DED_LEAVE = -0.5;
+var DED_LEAVE_NO_DP = -1;
 function isLeave(v){
   var t = S(v);
   if (!t) return false;
@@ -822,7 +823,7 @@ function buildDB(sheets, report){
     var leaveIn = isLeave(inRmk), leaveOut = isLeave(outRmk);
     var dLeave = 0;
     if (leaveIn || leaveOut){
-      dLeave = LEAVE_PTS;
+      dLeave = trips > 0 ? LEAVE_PTS : DED_LEAVE_NO_DP;   // มีดีพีอย่างน้อย 1 เที่ยว หัก 0.5 / ไม่มีดีพีเลย หัก 1.0 (เกณฑ์เดียวกับรถเสีย)
       dDev = 0; dDevOut = 0; devOutWhy = "";
       if (leaveIn){ dIn = 0; dCt = 0; ctStat = "leave"; note = ""; }
       if (leaveOut){ dOut = 0; outWhy = ""; }
@@ -850,7 +851,7 @@ function buildDB(sheets, report){
                 (inRmk ? " (หมายเหตุ: " + inRmk + ")" : " (ไม่ได้ระบุเหตุผล)"));
     if (dOut < 0) why2.push(fmtDed(dOut) + " " + outWhy);
     if (dLeave < 0)
-      why2.push(fmtDed(dLeave) + " ลางาน (หมายเหตุ: " + (leaveIn ? inRmk : outRmk) + ")");
+      why2.push(fmtDed(dLeave) + " ลางาน (ดีพีในวัน " + (trips > 0 ? trips + " เที่ยว" : "ไม่มีดีพี") + ") (หมายเหตุ: " + (leaveIn ? inRmk : outRmk) + ")");
     if (dCt < 0) why2.push(fmtDed(dCt) + " " + (note || "ตรวจรถสาย"));
     var mvRmk = inRmk.indexOf("โยก") !== -1 ? inRmk : outRmk;
     if (dRefuse < 0)
@@ -1149,7 +1150,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 66;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 67;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1755,10 +1756,12 @@ function computeRange(rm){
     // รถสำรอง: คิดคะแนนและหักเงินตามปกติ แต่ไม่มีสิทธิ์ได้รางวัลและการันตี
     //          และไม่ถูกหักอัตราติดลบของ TA 5 / TA 6
     const spare = !!t.spare;
-    const gAmount = spare ? 0 : +(gBase * tier.gpct/100).toFixed(2);
+    const t0ta = String(t.fleet||"").trim().toUpperCase() === "T0TA";   // ไม่มีสิทธิ์ Incentive/การันตี แต่ TA5/TA6 ยังถูกหักบาท/คิว
+    const gAmount = (spare || t0ta) ? 0 : +(gBase * tier.gpct/100).toFixed(2);
     const revenue = +cost.toFixed(2);
     // ถูกตัดสิทธิ์ = ไม่ได้รางวัลบวก แต่ถ้าอยู่กลุ่ม TA 5 / TA 6 ยังต้องโดนหักตามอัตราติดลบ
-    const incRate = spare ? 0 : (zero ? Math.min(0, tier.inc) : tier.inc);
+    const incRate = spare ? 0 : ((zero || t0ta) ? Math.min(0, tier.inc) : tier.inc);
+    if (t0ta && !zero){ zero = true; zr.push("FLEET_TYPE_NO = T0TA ไม่มีสิทธิ์รางวัล Incentive และการันตี"); }
     const incentive = +(incRate * qty).toFixed(2);
     const gTopup = +Math.max(0, gAmount - revenue).toFixed(2);
     const penalty = +movePen.toFixed(2);
@@ -1775,8 +1778,8 @@ function computeRange(rm){
       qty:+qty.toFixed(2), revenue,
       inc_rate:incRate, base_rate:tier.inc, incentive,
       zero, zreason: zr.join(" / "),
-      g_base:spare ? 0 : +gBase.toFixed(2), g_full:spare ? 0 : +gFull.toFixed(2),
-      g_pct:spare ? 0 : tier.gpct, g_amount:gAmount, g_topup:gTopup,
+      g_base:(spare||t0ta) ? 0 : +gBase.toFixed(2), g_full:(spare||t0ta) ? 0 : +gFull.toFixed(2),
+      g_pct:(spare||t0ta) ? 0 : tier.gpct, g_amount:gAmount, g_topup:gTopup,
       penalty, penalty_note: mpr.join(" | "),
       net:+(incentive + gTopup - penalty).toFixed(2)
     });
