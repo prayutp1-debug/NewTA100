@@ -321,7 +321,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 40;
+var ENGINE_VERSION = 41;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -431,6 +431,19 @@ var LATE_RMK_RE = /ไม่ตรวจสภาพ|เกินเวลาเ
 
 /** หมายเหตุ "ระบบคำนวณ" (สะกดผิดเป็น ระบบคำนวน ก็นับ) */
 function isAutoRemark(s){ return /^ระบบคำนว/.test(s); }
+
+/** หมายเหตุ Punch out ที่เป็นเหตุผลจริงจากโรงงาน (เช่น "เช็คออกให้") — ใช้ยกเว้นการหัก device_out = W
+ *  ไม่นับ: ว่าง / ปกติ / ระบบคำนวณ / ข้อความสั้นไร้ความหมาย ("-", ".", "ok" ฯลฯ) */
+var PLANT_OUT_RE = /เช็ค\s*เอ[าา]ท์?\s*ให้|เช็คออกให้|โรงงาน\s*(แก้ไข|ขอแก้|ทำให้|เช็ค)/;
+function isRealOutReason(s){
+  if (!s) return false;
+  var t = String(s).trim();
+  if (blankRemark(t) || isAutoRemark(t)) return false;
+  if (PLANT_OUT_RE.test(t)) return true;
+  var core = t.replace(/[\s.,\-–—_*\/\\0-9:]/g, "");
+  if (/^(ok|no|na|ไม่มี|ไม่มีเหตุผล|ปกติ)$/i.test(core)) return false;
+  return core.length >= 8;                 // ข้อความที่มีเนื้อหา (อย่างน้อย 8 ตัวอักษร)
+}
 
 /** กรณีโรงงานขอแก้ไข — Punch เวลา 00:00, สถานะปกติ, อุปกรณ์ว่างหรือ W
     และมีหมายเหตุระบุเหตุผลไว้ (ที่ไม่ใช่ "ระบบคำนวณ") */
@@ -726,10 +739,15 @@ function buildDB(sheets, report){
 
     /* ไม่ใช้ SDA ตอน Punch out และกลับก่อนเวลาเลิกงาน = หัก 0.25
        (ถ้า Punch out หลังเวลาเลิกงานแล้ว ไม่ต้องระบุเหตุผลก็ไม่หัก) */
+    var devOutWaived = false;
     if (devOut === "W" && early && !moved){
-      dDevOut = DED_SDA;
-      devOutWhy = "ไม่ใช้ SDA ตอน Punch out (Punch out " +
-                  (ot == null ? "ไม่มีเวลา" : hhmm(ot)) + " / เลิกงาน " + hhmm(po) + ")";
+      if (pout === "O" && isRealOutReason(outRmk)){
+        devOutWaived = true;      // โรงงานเช็คออกให้พร้อมเหตุผลจริง — ไม่หัก device_out
+      } else {
+        dDevOut = DED_SDA;
+        devOutWhy = "ไม่ใช้ SDA ตอน Punch out (Punch out " +
+                    (ot == null ? "ไม่มีเวลา" : hhmm(ot)) + " / เลิกงาน " + hhmm(po) + ")";
+      }
     }
     if (pout === ""){
       dOut = DED_OUT_BLANK; outWhy = "ไม่มีข้อมูล Punch out";
@@ -844,6 +862,7 @@ function buildDB(sheets, report){
     if (dDev < 0)
       why2.push(fmtDed(dDev) + " ไม่ใช้ SDA ตอน Punch in (device_in = " + devIn + ")");
     if (dDevOut < 0) why2.push(fmtDed(dDevOut) + " " + devOutWhy);
+    if (devOutWaived) why2.push("• โรงงานเช็คออกให้พร้อมระบุเหตุผล — ไม่หักเรื่อง device_out = W (หมายเหตุ: " + outRmk + ")");
     if (devCapped)
       why2.push("• ไม่ใช้ SDA ทั้งตอน Punch in และ Punch out — หักรวมกันไม่เกิน 0.25 คะแนน/วัน");
     if (lateFixed)
@@ -1150,7 +1169,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 68;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 69;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
