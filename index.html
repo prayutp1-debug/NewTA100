@@ -321,7 +321,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 41;
+var ENGINE_VERSION = 42;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -963,6 +963,44 @@ function buildDB(sheets, report){
     };
   }
 
+  /* ── รถแทน: รถสำรองมาวิ่งแทนรถจดทะเบียน ──
+     คะแนนวันทำงานของรถสำรองใช้แทนของรถจดทะเบียนในวันนั้น, คิว/รายได้/เที่ยวของรถสำรองรวมเข้ารถจดทะเบียน
+     และรถสำรองไม่นับยอดของวันนั้นซ้ำ (จึงไม่ถูกนำไปเฉลี่ยให้คันอื่นด้วย) */
+  function nfq(v){ return (Math.round(v*100)/100).toString(); }
+  var repDay = {};   // truck|ym|day -> {sp, qty, trip, sc}
+  var rsheet = sheets["รถแทน"];
+  if (rsheet && rsheet.length > 1){
+    var RH = headIdx(rsheet), cD = col(RH,"truck_demand_date"), cT = col(RH,"truck_no"), cR = col(RH,"truck_replace_no");
+    if (cD >= 0 && cT >= 0 && cR >= 0){
+      for (var ri=1; ri<rsheet.length; ri++){
+        var rdt = excelDate(cell(rsheet[ri],cD)), rt = S(cell(rsheet[ri],cT)), rs = S(cell(rsheet[ri],cR));
+        if (!rdt || !rt || !rs || rt === rs) continue;
+        var rym = ymKey(rdt.y, rdt.m), rka = rt + "|" + rym + "|" + rdt.d, rkb = rs + "|" + rym + "|" + rdt.d;
+        var sa = dayAgg[rkb];
+        if (!sa) continue;                                    // รถสำรองไม่มี Punch วันนั้น
+        var ssc = 1 + sa.ded + Math.max(DED_SDA, sa.dev);
+        ssc = +(ssc < 0 ? 0 : (ssc > 1 ? 1 : ssc)).toFixed(2);
+        var info = repDay[rka];
+        if (!info) info = repDay[rka] = {sp:[], qty:0, cost:0, trip:0, sc:ssc, rmk:[]};
+        else info.sc = Math.min(info.sc, ssc);
+        info.sp.push(rs);
+        var sq = +sa.qty.toFixed(2);
+        info.qty += sq; info.trip += sa.trip; info.cost += sa.cost;
+        info.rmk.push("รถสำรอง " + rs + " วิ่งแทน : " + nfq(sq) + " คิว / " + sa.trip + " เที่ยว · ได้ " + ssc.toFixed(2) + " คะแนน");
+        sa.rmk.forEach(function(x){ info.rmk.push("(" + rs + ") " + x); });
+        delete dayAgg[rkb];
+        if (!dayAgg[rka]) dayAgg[rka] = {ded:0, dev:0, rmk:[], qty:0, cost:0, trip:0, rows:0};
+      }
+      for (var rk in repDay){
+        var ri2 = repDay[rk], ag9 = dayAgg[rk];
+        ag9.qty += ri2.qty; ag9.cost += ri2.cost; ag9.trip += ri2.trip;
+        ag9.fixScore = ri2.sc;
+        ag9.rep = ri2.sp.join(",");
+        ag9.rmk = ri2.rmk;
+      }
+    }
+  }
+
   /* ── สรุปรายคัน แยกรายเดือน ── */
   report("สรุปคะแนนรายคัน", .85);
   var trucksMap = {};
@@ -971,7 +1009,8 @@ function buildDB(sheets, report){
     var tv = trucksMap[tn2] || (trucksMap[tn2] = {});
     var mv = tv[ym2] || (tv[ym2] = {d:{}, r:{}, qd:{}, td:{}, q:0, c:0});
     var sc = 1 + ag.ded + Math.max(DED_SDA, ag.dev);   // เพดานหักอุปกรณ์ 0.25/วัน
-    mv.d[dd] = +(sc < 0 ? 0 : (sc > 1 ? 1 : sc)).toFixed(2);
+    mv.d[dd] = ag.fixScore != null ? ag.fixScore : +(sc < 0 ? 0 : (sc > 1 ? 1 : sc)).toFixed(2);
+    if (ag.rep){ (mv.rep || (mv.rep = {}))[dd] = ag.rep; }
     mv.q += ag.qty; mv.c += ag.cost;
     mv.qd[dd] = +ag.qty.toFixed(2);
     mv.td[dd] = ag.trip;
@@ -1035,7 +1074,7 @@ function buildDB(sheets, report){
       var mpTot = 0, mpNote = [];
       if (mp2) for (var dd2 in mp2.d){ mpTot += mp2.d[dd2]; mpNote.push("วันที่ " + dd2 + ": " + mp2.n[dd2]); }
       m[ym3] = {
-        d: src.d, r: src.r, qd: src.qd, td: src.td,
+        d: src.d, r: src.r, qd: src.qd, td: src.td, rep: src.rep,
         q: +src.q.toFixed(2), c: +src.c.toFixed(2),
         q0: src.q0, c0: src.c0, aq: src.aq, ac: src.ac,
         nsp: src.nsp, moved: src.moved ? 1 : 0,
@@ -1131,6 +1170,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
       NEEDED.forEach(function(name){
         sheets[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], AOA_OPTS);
       });
+      if (wb.Sheets["รถแทน"]) sheets["รถแทน"] = XLSX.utils.sheet_to_json(wb.Sheets["รถแทน"], AOA_OPTS);
       wb = null;
       var db = buildDB(sheets, function(t, p){ say(t, p); });
       sheets = null;
@@ -1169,7 +1209,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 69;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 70;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1288,6 +1328,7 @@ async function computeMain(source){
   stage("กำลังอ่านข้อมูล", .33); await pause();
   const sheets = {};
   NEEDED.forEach(n=>{ sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], AOA_OPTS); });
+  if (wb.Sheets["รถแทน"]) sheets["รถแทน"] = XLSX.utils.sheet_to_json(wb.Sheets["รถแทน"], AOA_OPTS);
   const db = buildDB(sheets, (t,p)=>stage(t,p));
   db.meta.src_size = source.size || 0;
   stage("กำลังจัดเก็บผลลัพธ์", .97); await pause();
@@ -1749,11 +1790,11 @@ function computeRange(rm){
     let score = 0, qty = 0, cost = 0, gBase = 0, movePen = 0;
     let movedQ = 0, addedQ = 0, addedC = 0, nSpare = 0, gFull = 0;
     let gMissing = false, hit = false, zero = false;
-    const zr = [], mpr = [], days = {}, rmk = {}, qd = {}, tdd = {};
+    const zr = [], mpr = [], days = {}, rmk = {}, qd = {}, tdd = {}, repd = {};
     for (const k of keys){
       const mv = t.m[k]; if (!mv) continue;
       hit = true;
-      days[k] = mv.d; rmk[k] = mv.r || {}; qd[k] = mv.qd || {}; tdd[k] = mv.td || {};
+      days[k] = mv.d; rmk[k] = mv.r || {}; qd[k] = mv.qd || {}; tdd[k] = mv.td || {}; repd[k] = mv.rep || {};
       for (const d in mv.d) score += mv.d[d];
       qty += mv.q; cost += mv.c;
       const isT012 = t.fleet === "T012" && t.gt_ym != null && t.gt_ym >= lastYM;
@@ -1791,7 +1832,7 @@ function computeRange(rm){
       acct:t.acct||"", acct_raw:t.acct_raw||"", spare,
       gt_ok: t.fleet === "T012" && t.gt_ym != null && t.gt_ym >= lastYM,
       g_missing: gMissing,
-      days, rmk, qd, td: tdd,
+      days, rmk, qd, td: tdd, rep: repd,
       score, pct, tier:tier.name,
       q_moved: movedQ, q_added: addedQ, c_added: addedC, n_spare: nSpare,
       qty:+qty.toFixed(2), revenue,
@@ -2456,7 +2497,9 @@ function vScore(root){
       const td = el("td", showScore ? "d" : "d qt");
       if(v!=null){
         td.className = (showScore ? "d " : "d qt ") + cls(v);
+        const rpn = x.rep && x.rep[c.ym] && x.rep[c.ym][c.day];
         if (showScore) td.textContent = nf(v,2);
+        else if (rpn) td.textContent = rpn.replace(/,/g,"+");
         else {
           const qq = x.qd[c.ym] && x.qd[c.ym][c.day], tp = x.td[c.ym] && x.td[c.ym][c.day];
           td.textContent = nf(qq||0,2) + "/" + n0(tp||0);
@@ -2465,7 +2508,7 @@ function vScore(root){
         if(rm){
           td.className += " mk";
           td.title = `${c.label} วันที่ ${c.day} · รถ ${x.truck} — ได้ ${nf(v,2)} คะแนน\n`+
-                     `${v < 1 ? "สาเหตุที่ถูกหัก:" : "หมายเหตุ:"}\n${rm}`;
+                     `${rpn ? "รถสำรอง "+rpn+" วิ่งแทน\n" : ""}${v < 1 ? "สาเหตุที่ถูกหัก:" : "หมายเหตุ:"}\n${rm}`;
         }
       }
       tr.appendChild(td);
@@ -3023,6 +3066,8 @@ function sheetSpec(){
       ...cols.map((c,i)=>({l:dayHead[i], t:"str", w:9, align:"center",
         f:x=>{ const dm=x.days[c.ym];
                if (!dm || dm[c.day]==null) return "";
+               const rpn = x.rep && x.rep[c.ym] && x.rep[c.ym][c.day];
+               if (rpn) return rpn.replace(/,/g,"+");
                return nf(x.qd[c.ym]&&x.qd[c.ym][c.day]||0,2) + "/" + n0(x.td[c.ym]&&x.td[c.ym][c.day]||0); },
         fill:(v,x,c2)=>{ const dm=x.days[c.ym]; const sc=dm?dm[c.day]:null;
                          return sc==null? null : (XC.score[sc] || XC.score[0]); },
