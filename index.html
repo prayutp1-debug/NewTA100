@@ -2035,6 +2035,10 @@ function render(){
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
+  if (D && D.meta && (D.meta.engine||0) < 42){
+    const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
+    w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
+  }
   ({overview:vOverview,summary:vSummary,summaryPlant:vSummary,score:vScore,scoreDay:vScore,reward:vReward,fine:vFine,detail:vDetail,rules:vRules}[TAB])(v);
 }
 
