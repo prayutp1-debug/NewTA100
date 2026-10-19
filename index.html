@@ -321,7 +321,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","รถแทน"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 42;
+var ENGINE_VERSION = 43;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -728,6 +728,8 @@ function buildDB(sheets, report){
 
     var dIn  = SC_IN[pin]   || 0;
     var dDev = moved ? 0 : (SC_DEV[devIn] || 0);
+    var devInWaived = false;       // โรงงานเช็คอินให้พร้อมระบุเหตุผล (punch_in_status = O) — ไม่หัก device_in = W
+    if (dDev < 0 && pin === "O" && isRealOutReason(inRmk)){ dDev = 0; devInWaived = true; }
     var movedFlag = moved;
 
     /* ── punch out ── */
@@ -862,6 +864,7 @@ function buildDB(sheets, report){
     if (dDev < 0)
       why2.push(fmtDed(dDev) + " ไม่ใช้ SDA ตอน Punch in (device_in = " + devIn + ")");
     if (dDevOut < 0) why2.push(fmtDed(dDevOut) + " " + devOutWhy);
+    if (devInWaived) why2.push("• โรงงานเช็คอินให้พร้อมระบุเหตุผล — ไม่หักเรื่อง device_in = W (หมายเหตุ: " + inRmk + ")");
     if (devOutWaived) why2.push("• โรงงานเช็คออกให้พร้อมระบุเหตุผล — ไม่หักเรื่อง device_out = W (หมายเหตุ: " + outRmk + ")");
     if (devCapped)
       why2.push("• ไม่ใช้ SDA ทั้งตอน Punch in และ Punch out — หักรวมกันไม่เกิน 0.25 คะแนน/วัน");
@@ -1209,7 +1212,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 70;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 71;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -2035,7 +2038,7 @@ function render(){
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
-  if (D && D.meta && (D.meta.engine||0) < 42){
+  if (D && D.meta && (D.meta.engine||0) < 43){
     const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
     w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
   }
