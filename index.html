@@ -1212,7 +1212,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 73;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 75;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1726,7 +1726,10 @@ function boot(db, cached){
 
   const nav = $("#tabs");
   nav.innerHTML = "";
-  TABS.forEach(([id,label])=>{
+  const HIDE_NORMAL = ["overview","summary","summaryPlant","reward"];   // สถานะ NORMAL ไม่เห็นแท็บเหล่านี้
+  const tabsShown = TABS.filter(([id])=> !(SESSION && SESSION.normal && HIDE_NORMAL.indexOf(id) >= 0));
+  if (!tabsShown.some(([id])=>id===TAB)) TAB = tabsShown.length ? tabsShown[0][0] : TAB;
+  tabsShown.forEach(([id,label])=>{
     const b = el("button",null,label);
     b.setAttribute("role","tab"); b.dataset.tab=id;
     b.onclick = ()=>{ TAB=id; syncFilters(); render(); };
@@ -3466,14 +3469,16 @@ function loginWhy(via){
   return 'Apps Script ไม่ยืนยัน และไม่พบคู่ชื่อผู้ใช้/รหัสผ่านนี้ในกูเกิลชีต';
 }
 function startSession(u){
-  SESSION={ name:u.name||u.user, code:u.user, status:u.status, all:/SCG/.test(u.status||'') };
+  var st = String(u.status||'').toUpperCase();
+  /* SCG = เห็นทุกผู้รับเหมาและทุกแท็บ · VIP / VENDER = เห็นเฉพาะของบริษัทตนเอง (ตามคอลัมน์ Name) ทุกแท็บ · NORMAL = เห็นเฉพาะของตนเอง ซ่อนแท็บภาพรวม/สรุป/คำนวณรางวัล */
+  SESSION={ name:u.name||u.user, code:u.user, status:u.status, all:/SCG/.test(st), vip:/VIP/.test(st) && !/SCG/.test(st), normal:/NORMAL/.test(st) && !/SCG|VIP/.test(st) };
   SESSION.admin = ADMIN_USERS.some(function(n){ return normUser(n) === normUser(u.user); });
   ['btn-reload','btn-pick','btn-json'].forEach(function(id){
     var b = gid(id); if (b) b.hidden = !SESSION.admin;
   });
   gid('whoChip').textContent = SESSION.name;
   gid('whoChip').title = 'ผู้ใช้ ' + SESSION.code + (SESSION.status? ' · '+SESSION.status : '');
-  gid('roleChip').textContent = SESSION.all ? 'SCG — ดูได้ทุกผู้รับเหมา' : 'ผู้รับเหมา — เห็นเฉพาะข้อมูลของตนเอง';
+  gid('roleChip').textContent = SESSION.vip ? 'VIP — เห็นเฉพาะข้อมูลของบริษัทตนเอง · ทุกแท็บ' : SESSION.all ? 'SCG — ดูได้ทุกผู้รับเหมา' : SESSION.normal ? 'Normal — เห็นเฉพาะข้อมูลของตนเอง' : 'ผู้รับเหมา — เห็นเฉพาะข้อมูลของตนเอง';
   gid('roleChip').style.background = SESSION.all ? 'rgba(134,239,172,.22)' : 'rgba(253,224,71,.22)';
   gid('login').hidden = true;
   document.body.classList.remove('locked');
