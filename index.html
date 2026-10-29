@@ -54,6 +54,13 @@ nav button:focus-visible{outline:2px solid var(--signal);outline-offset:-4px}
 .f{display:flex;flex-direction:column;gap:3px;min-width:0}
 .f label{font-size:11px;color:var(--ink-3)}
 .f select,.f input{padding:6px 8px;border:1px solid var(--rule);border-radius:4px;background:#fff;max-width:190px}
+.ms{position:relative}
+.ms-btn{padding:6px 24px 6px 8px;border:1px solid var(--rule);border-radius:4px;background:#fff;max-width:190px;min-width:120px;width:100%;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:inherit;color:inherit}
+.ms-btn::after{content:"▾";position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--ink-3)}
+.ms-panel{position:absolute;z-index:50;top:100%;left:0;min-width:220px;max-width:340px;max-height:300px;overflow:auto;background:#fff;border:1px solid var(--rule);border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.18);padding:4px 0}
+.ms-clear{display:block;width:100%;text-align:left;padding:6px 10px;border:0;background:#f1f3fb;font:inherit;color:var(--link);cursor:pointer}
+.ms-opt{display:flex;align-items:center;gap:4px;padding:5px 10px;cursor:pointer;white-space:normal}
+.ms-opt:hover{background:#eef1fb}
 .f select:focus,.f input:focus{outline:2px solid var(--link);outline-offset:-1px;border-color:var(--link)}
 .btn{padding:7px 13px;border:1px solid var(--rule);background:#fff;border-radius:4px;cursor:pointer}
 .btn:hover{background:#eef3ff;border-color:var(--link);color:var(--link)}
@@ -1212,7 +1219,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 75;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 76;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1221,7 +1228,8 @@ let LAST_JSON = null;
 let XLSX_URL = XLSX_CANDIDATES[0];
 let D = null, DETAIL = null, TAB = "overview", SRC = {};
 const RM = {a:"", b:""};   // ช่วงเดือนของบล็อก "สรุปรางวัลรายเดือน"
-const F = {mo:"",m1:"",m2:"",gb:"vendor",division:"",dept:"",sect:"",plant:"",vendor:"",tier:"",q:""};
+const F = {mo:"",m1:"",m2:"",gb:"vendor",division:[],dept:[],sect:[],plant:[],vendor:[],tier:[],q:""};
+const inF = (k,v)=> !F[k].length || F[k].indexOf(v) >= 0;   // ตัวกรองเลือกได้หลายรายการ (ว่าง = ทั้งหมด)
 const PAGE = {overview:1,summary:1,summaryPlant:1,score:1,scoreDay:1,reward:1,fine:1,detail:1};
 const SORT = {summary:{k:"net",d:-1},summaryPlant:{k:"net",d:-1},score:{k:"truck",d:1},scoreDay:{k:"truck",d:1},reward:{k:"net",d:-1},fine:{k:"total",d:-1},detail:{k:"day",d:1}};
 const PER = {summary:200,summaryPlant:200,score:60,scoreDay:60,reward:80,fine:60,detail:200};
@@ -1736,7 +1744,7 @@ function boot(db, cached){
     nav.appendChild(b);
   });
 
-  if (first) buildFilters(); else { ["division","dept","sect","plant","vendor","tier","q"].forEach(k=>F[k]=""); }
+  if (first) buildFilters(); else { ["division","dept","sect","plant","vendor","tier"].forEach(k=>F[k]=[]); F.q=""; }
   syncFilters();
   resetPages();
   render();
@@ -1883,16 +1891,16 @@ function buildFilters(){
     <div class="f" id="f-mo-wrap"><label for="f-mo">เดือน</label><select id="f-mo"></select></div>
     <div class="f" id="f-m1-wrap" hidden><label for="f-m1">เดือนเริ่มต้น</label><select id="f-m1"></select></div>
     <div class="f" id="f-m2-wrap" hidden><label for="f-m2">เดือนสิ้นสุด</label><select id="f-m2"></select></div>
-    <div class="f"><label for="f-division">กิจการ</label><select id="f-division"></select></div>
-    <div class="f"><label for="f-dept">ภาค</label><select id="f-dept"></select></div>
-    <div class="f"><label for="f-sect">แผนก</label><select id="f-sect"></select></div>
-    <div class="f"><label for="f-plant">โรงงาน</label><select id="f-plant"></select></div>
-    <div class="f"><label for="f-vendor">ผู้รับเหมา</label><select id="f-vendor"></select></div>
+    <div class="f"><label for="f-division">กิจการ</label><div class="ms" id="f-division"></div></div>
+    <div class="f"><label for="f-dept">ภาค</label><div class="ms" id="f-dept"></div></div>
+    <div class="f"><label for="f-sect">แผนก</label><div class="ms" id="f-sect"></div></div>
+    <div class="f"><label for="f-plant">โรงงาน</label><div class="ms" id="f-plant"></div></div>
+    <div class="f"><label for="f-vendor">ผู้รับเหมา</label><div class="ms" id="f-vendor"></div></div>
     <div class="f" id="f-gb-wrap" hidden><label for="f-gb">สรุปตาม</label><select id="f-gb">
       <option value="division">กิจการ</option><option value="dept">ภาค</option>
       <option value="sect">แผนกผลิต</option><option value="plant">โรงงาน</option>
       <option value="vendor" selected>ผู้รับเหมา</option></select></div>
-    <div class="f"><label for="f-tier">กลุ่ม TA</label><select id="f-tier"></select></div>
+    <div class="f"><label for="f-tier">กลุ่ม TA</label><div class="ms" id="f-tier"></div></div>
     <div class="f"><label for="f-q">ค้นหาเบอร์รถ / คนขับ</label><input id="f-q" type="search" placeholder="เช่น 0018 หรือ ON0447"></div>
     <div class="spacer"></div>
     <button class="btn" id="f-reset">ล้างตัวกรอง</button>
@@ -1902,19 +1910,16 @@ function buildFilters(){
     $("#f-"+k).onchange = e=>{ F[k]=e.target.value; resetPages(); syncFilters(); render(); };
   });
   ["division","dept","sect","plant","vendor","tier"].forEach(k=>{
-    $("#f-"+k).onchange = e=>{
-      F[k]=e.target.value;
-      if(k==="division"){F.dept=F.sect=F.plant="";}
-      if(k==="dept"){F.sect=F.plant="";}
-      if(k==="sect"){F.plant="";}
+    $("#f-"+k).addEventListener("msChange", e=>{
+      F[k] = e.detail;
       resetPages(); syncFilters(); render();
-    };
+    });
   });
   let timer; $("#f-q").oninput = e=>{
     clearTimeout(timer); timer=setTimeout(()=>{F.q=e.target.value.trim();resetPages();render();},220);
   };
   $("#f-reset").onclick = ()=>{
-    ["division","dept","sect","plant","vendor","tier","q"].forEach(k=>F[k]="");
+    ["division","dept","sect","plant","vendor","tier"].forEach(k=>F[k]=[]); F.q="";
     F.m1 = MONTHS.length?MONTHS[0].key:""; F.m2 = MONTHS.length?MONTHS[MONTHS.length-1].key:"";
     F.mo = F.m2;
     $("#f-q").value="";
@@ -1924,14 +1929,37 @@ function buildFilters(){
 }
 const resetPages = ()=>{Object.keys(PAGE).forEach(k=>PAGE[k]=1);Object.assign(PER,PER0);};
 
+/* ตัวเลือกแบบเลือกได้หลายรายการ (ติ๊กเลือก) */
+function msRender(host, vals, cur, allLabel){
+  host.innerHTML = "";
+  const btn = el("button","ms-btn"); btn.type = "button";
+  const label = cur.length===0 ? allLabel : (cur.length===1 ? cur[0] : `เลือก ${cur.length} รายการ`);
+  btn.textContent = label; btn.title = cur.join(", ") || allLabel;
+  const panel = el("div","ms-panel"); panel.hidden = true;
+  const clr = el("button","ms-clear", allLabel + " (ล้างที่เลือก)"); clr.type = "button";
+  clr.onclick = ()=>{ host.dispatchEvent(new CustomEvent("msChange",{detail:[]})); };
+  panel.appendChild(clr);
+  vals.forEach(v=>{
+    const lb = el("label","ms-opt"); const cb = el("input"); cb.type = "checkbox"; cb.checked = cur.indexOf(v) >= 0;
+    cb.onchange = ()=>{
+      const sel = Array.from(panel.querySelectorAll("input:checked")).map(i=>i.dataset.v);
+      host.dataset.open = "1";
+      host.dispatchEvent(new CustomEvent("msChange",{detail:sel}));
+    };
+    cb.dataset.v = v; lb.appendChild(cb); lb.appendChild(document.createTextNode(" " + v)); panel.appendChild(lb);
+  });
+  btn.onclick = ()=>{ const open = panel.hidden; document.querySelectorAll(".ms-panel").forEach(x=>x.hidden=true); panel.hidden = !open; };
+  host.appendChild(btn); host.appendChild(panel);
+  if (host.dataset.open === "1"){ panel.hidden = false; delete host.dataset.open; }
+}
+document.addEventListener("click", e=>{ if(!e.target.closest || !e.target.closest(".ms")) document.querySelectorAll(".ms-panel").forEach(x=>x.hidden=true); });
+
 function syncFilters(){
   const opts = (id, vals, cur, all, key)=>{
-    const s = $("#"+id); if(!s) return;
+    const host = $("#"+id); if(!host) return;
     const v = vals.filter(Boolean).sort((a,b)=>a.localeCompare(b,"th"));
-    if (key && cur && !v.includes(cur)) F[key] = "";   // ค่าที่เลือกไว้ไม่มีในเดือนนี้ — ล้างให้ตรงกับที่เห็น
-    s.innerHTML = `<option value="">${all}</option>` +
-      v.map(x=>`<option value="${esc(x)}"${x===cur?" selected":""}>${esc(x)}</option>`).join("");
-    s.value = v.includes(cur) ? cur : "";
+    if (key){ F[key] = (F[key]||[]).filter(x=>v.includes(x)); cur = F[key]; }   // ค่าที่เลือกไว้แต่ไม่มีในตัวเลือกตอนนี้ — ตัดออก
+    msRender(host, v, cur, all);
   };
   ["mo","m1","m2"].forEach(k=>{
     const s = $("#f-"+k); if(!s) return;
@@ -1942,25 +1970,24 @@ function syncFilters(){
   const t = derive().trucks;
   const uniq = (arr,k)=>[...new Set(arr.map(x=>x[k]))];
   opts("f-division", uniq(t,"division"), F.division, "ทุกกิจการ", "division");
-  const a = F.division? t.filter(x=>x.division===F.division):t;
+  const a = F.division.length? t.filter(x=>inF("division",x.division)):t;
   opts("f-dept", uniq(a,"dept"), F.dept, "ทุกภาค", "dept");
-  const b = F.dept? a.filter(x=>x.dept===F.dept):a;
+  const b = F.dept.length? a.filter(x=>inF("dept",x.dept)):a;
   opts("f-sect", uniq(b,"sect"), F.sect, "ทุกแผนก", "sect");
-  const c = F.sect? b.filter(x=>x.sect===F.sect):b;
+  const c = F.sect.length? b.filter(x=>inF("sect",x.sect)):b;
   opts("f-plant", uniq(c,"plant"), F.plant, "ทุกโรงงาน", "plant");
-  const d = F.plant? c.filter(x=>x.plant===F.plant):c;
+  const d = F.plant.length? c.filter(x=>inF("plant",x.plant)):c;
   opts("f-vendor", uniq(d,"vendor"), F.vendor, "ทุกผู้รับเหมา", "vendor");
-  opts("f-tier", D.tiers.map(x=>x.name), F.tier, "ทุกกลุ่ม");
+  opts("f-tier", D.tiers.map(x=>x.name), F.tier, "ทุกกลุ่ม", "tier");
 }
 
 function matchOrg(x){
-  return (!F.division||x.division===F.division) && (!F.dept||x.dept===F.dept)
-      && (!F.sect||x.sect===F.sect) && (!F.plant||x.plant===F.plant)
-      && (!F.vendor||x.vendor===F.vendor);
+  return inF("division",x.division) && inF("dept",x.dept) && inF("sect",x.sect)
+      && inF("plant",x.plant) && inF("vendor",x.vendor);
 }
 function trucks(){
   const q = F.q.toLowerCase();
-  return derive().trucks.filter(x=> matchOrg(x) && (!F.tier||x.tier===F.tier)
+  return derive().trucks.filter(x=> matchOrg(x) && inF("tier",x.tier)
     && (!q || x.truck.toLowerCase().includes(q) || x.plant.toLowerCase().includes(q)
           || x.vendor.toLowerCase().includes(q)));
 }
@@ -2292,7 +2319,8 @@ function rangeLabelTH(){
   return r.length===1 ? thMonth(r[0]) : thMonth(r[0])+" – "+thMonth(r[r.length-1]);
 }
 function scopeLabel(){
-  return F.vendor || F.plant || F.sect || F.dept || F.division || "ทุกกิจการ";
+  const k = ["vendor","plant","sect","dept","division"].find(x=>F[x].length);
+  return k ? F[k].join(", ") : "ทุกกิจการ";
 }
 const GB = {
   division:{name:"กิจการ", cols:[["division","กิจการ",22]], key:x=>x.division||"(ไม่ระบุ)"},
@@ -2332,7 +2360,7 @@ function summaryRows(gOverride, onlyKeys){
   const blank = ()=>({reg:0,spare:0,qty:0,revenue:0,ta1:0,ta2:0,ta3:0,ta4:0,ta5:0,ta6:0,
                       incentive:0,guarantee:0,deduct:0,pen:0,fineAmt:0,fine:0,net:0,note:""});
   const scope = limit ? deriveFor(onlyKeys) : null;
-  (scope ? scope.trucks.filter(x=>matchOrg(x)&&(!F.tier||x.tier===F.tier)) : trucks()).forEach(x=>{
+  (scope ? scope.trucks.filter(x=>matchOrg(x)&&inF("tier",x.tier)) : trucks()).forEach(x=>{
     const k = g.key(x);
     const o = map[k] || (map[k] = Object.assign(blank(), {_k:k}, pick(x, g.cols)));
     if (x.spare) o.spare++; else o.reg++;
@@ -2715,7 +2743,7 @@ function vDetail(root){
     if(!inRange[r[I.ym]] || !allow[r[I.truck]]) return false;
     const o = DETAIL.org[r[I.truck]];
     if(!o || !matchOrg(o)) return false;
-    if(F.tier){ const dt = derive().trucks.find(x=>x.truck===r[I.truck]); if(!dt || dt.tier!==F.tier) return false; }
+    if(F.tier.length){ const dt = derive().trucks.find(x=>x.truck===r[I.truck]); if(!dt || !inF("tier",dt.tier)) return false; }
     if(q && !(r[I.truck].toLowerCase().includes(q) || r[I.driver].toLowerCase().includes(q))) return false;
     return true;
   });
@@ -3157,7 +3185,7 @@ function sheetSpec(){
       if(!inRange[r[I.ym]] || !der.allow[r[I.truck]]) return false;
       const o = DETAIL.org[r[I.truck]];
       if(!o || !matchOrg(o)) return false;
-      if(F.tier){ const dt = der.trucks.find(x=>x.truck===r[I.truck]); if(!dt || dt.tier!==F.tier) return false; }
+      if(F.tier.length){ const dt = der.trucks.find(x=>x.truck===r[I.truck]); if(!dt || !inF("tier",dt.tier)) return false; }
       return !q || r[I.truck].toLowerCase().includes(q) || r[I.driver].toLowerCase().includes(q);
     });
     const CT = {on_time:"ตรวจตรงเวลา",late_shift:"ตรวจรถสาย (เกินเวลาเข้างาน+30 น.)",
