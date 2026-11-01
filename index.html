@@ -328,7 +328,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","รถแทน"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 43;
+var ENGINE_VERSION = 44;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -977,6 +977,7 @@ function buildDB(sheets, report){
      คะแนนวันทำงานของรถสำรองใช้แทนของรถจดทะเบียนในวันนั้น, คิว/รายได้/เที่ยวของรถสำรองรวมเข้ารถจดทะเบียน
      และรถสำรองไม่นับยอดของวันนั้นซ้ำ (จึงไม่ถูกนำไปเฉลี่ยให้คันอื่นด้วย) */
   function nfq(v){ return (Math.round(v*100)/100).toString(); }
+  var repSp = {};    // spare|ym -> {q,c,notes[]} สำหรับแสดงผลที่รถสำรอง
   var repDay = {};   // truck|ym|day -> {sp, qty, trip, sc}
   var rsheet = sheets["รถแทน"];
   if (rsheet && rsheet.length > 1){
@@ -994,6 +995,8 @@ function buildDB(sheets, report){
         if (!info) info = repDay[rka] = {sp:[], qty:0, cost:0, trip:0, sc:ssc, rmk:[]};
         else info.sc = Math.min(info.sc, ssc);
         info.sp.push(rs);
+        var rsk = rs + "|" + rym, rso = repSp[rsk] || (repSp[rsk] = {q:0, c:0, notes:[]});
+        rso.q += sa.qty; rso.c += sa.cost; rso.notes.push("วันที่ " + rdt.d + " แทนรถ " + rt + " (" + nfq(+sa.qty.toFixed(2)) + " คิว)");
         var sq = +sa.qty.toFixed(2);
         info.qty += sq; info.trip += sa.trip; info.cost += sa.cost;
         info.rmk.push("รถสำรอง " + rs + " วิ่งแทน : " + nfq(sq) + " คิว / " + sa.trip + " เที่ยว · ได้ " + ssc.toFixed(2) + " คะแนน");
@@ -1014,6 +1017,7 @@ function buildDB(sheets, report){
   /* ── สรุปรายคัน แยกรายเดือน ── */
   report("สรุปคะแนนรายคัน", .85);
   var trucksMap = {};
+  var mvNew = function(){ return {d:{}, r:{}, qd:{}, td:{}, q:0, c:0}; };
   for (var ak2 in dayAgg){
     var pcs = ak2.split("|"), tn2 = pcs[0], ym2 = pcs[1], dd = +pcs[2], ag = dayAgg[ak2];
     var tv = trucksMap[tn2] || (trucksMap[tn2] = {});
@@ -1025,6 +1029,12 @@ function buildDB(sheets, report){
     mv.qd[dd] = +ag.qty.toFixed(2);
     mv.td[dd] = ag.trip;
     if (ag.rmk.length) mv.r[dd] = ag.rmk.join("\n");
+  }
+
+  for (var rsk2 in repSp){
+    var rp2 = rsk2.split("|"), rtv = trucksMap[rp2[0]] || (trucksMap[rp2[0]] = {});
+    var rmv = rtv[rp2[1]] || (rtv[rp2[1]] = mvNew());
+    rmv.rq = +repSp[rsk2].q.toFixed(2); rmv.rc = +repSp[rsk2].c.toFixed(2); rmv.rn = repSp[rsk2].notes.join(" · ");
   }
 
   /* รถเสริม: ย้ายคิวและรายได้ไปเฉลี่ยให้รถจดทะเบียนในโรงงานเดียวกัน ผู้รับเหมาเดียวกัน */
@@ -1086,7 +1096,7 @@ function buildDB(sheets, report){
       m[ym3] = {
         d: src.d, r: src.r, qd: src.qd, td: src.td, rep: src.rep,
         q: +src.q.toFixed(2), c: +src.c.toFixed(2),
-        q0: src.q0, c0: src.c0, aq: src.aq, ac: src.ac,
+        q0: src.q0, c0: src.c0, aq: src.aq, ac: src.ac, rq: src.rq, rc: src.rc, rn: src.rn,
         nsp: src.nsp, moved: src.moved ? 1 : 0,
         gb: gm ? gm.old : 0, gt: gm ? gm.t012 : 0, gm: gm ? 0 : 1,
         z: fk2 ? 1 : 0,
@@ -1219,7 +1229,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 76;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 77;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1805,7 +1815,8 @@ function computeRange(rm){
   for (const t of D.trucks){
     if (!canSee(t)) continue;
     let score = 0, qty = 0, cost = 0, gBase = 0, movePen = 0;
-    let movedQ = 0, addedQ = 0, addedC = 0, nSpare = 0, gFull = 0;
+    let movedQ = 0, movedC = 0, repQ = 0, repC = 0, addedQ = 0, addedC = 0, nSpare = 0, gFull = 0;
+    const repN = [];
     let gMissing = false, hit = false, zero = false;
     const zr = [], mpr = [], days = {}, rmk = {}, qd = {}, tdd = {}, repd = {};
     for (const k of keys){
@@ -1820,7 +1831,7 @@ function computeRange(rm){
       gBase += gPick * (gRatio[k] || 1);
       gFull += gPick;
       movePen += mv.mp || 0;
-      movedQ += mv.q0 || 0; addedQ += mv.aq || 0; addedC += mv.ac || 0;
+      movedQ += mv.q0 || 0; movedC += mv.c0 || 0; repQ += mv.rq || 0; repC += mv.rc || 0; if (mv.rn) repN.push(mv.rn); addedQ += mv.aq || 0; addedC += mv.ac || 0;
       if (mv.nsp) nSpare = mv.nsp;
       if (mv.gm) gMissing = true;
       if (mv.z){ zero = true; if (mv.zr) zr.push(mv.zr); }
@@ -1852,7 +1863,7 @@ function computeRange(rm){
       g_missing: gMissing,
       days, rmk, qd, td: tdd, rep: repd,
       score, pct, rem_days:remDays, score_proj:+(score+remDays).toFixed(2), den_days:den, tier:tier.name,
-      q_moved: movedQ, q_added: addedQ, c_added: addedC, n_spare: nSpare,
+      q_moved: movedQ, c_moved: movedC, q_rep: +repQ.toFixed(2), c_rep: +repC.toFixed(2), rep_note: repN.join(" · "), q_added: addedQ, c_added: addedC, n_spare: nSpare,
       qty:+qty.toFixed(2), revenue,
       inc_rate:incRate, base_rate:tier.inc, incentive,
       zero, zreason: zr.join(" / "),
@@ -2072,7 +2083,7 @@ function render(){
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
-  if (D && D.meta && (D.meta.engine||0) < 43){
+  if (D && D.meta && (D.meta.engine||0) < 44){
     const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
     w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
   }
@@ -2575,6 +2586,19 @@ function vScore(root){
 }
 
 /* ── 3. คำนวณรางวัล ───────────────────────────────────────── */
+/* รถเสริม/รถสำรอง: คิวและรายได้ที่ถูกนำไปเฉลี่ย/รวมให้รถจดทะเบียนแล้ว */
+const isShared = x=> !!x.spare && x.qty === 0 && ((x.q_moved||0) + (x.q_rep||0) + (x.c_moved||0) + (x.c_rep||0)) > 0;
+const qShown = x=> isShared(x) ? +((x.q_moved||0) + (x.q_rep||0)).toFixed(2) : x.qty;
+const cShown = x=> isShared(x) ? +((x.c_moved||0) + (x.c_rep||0)).toFixed(2) : x.revenue;
+function shareNote(x){
+  if (isShared(x)){
+    const qO = x.q_moved||0, cO = x.c_moved||0, qR = x.q_rep||0, cR = x.c_rep||0;
+    return "รถเสริม/รถสำรอง — คิวและรายได้ค่าขนส่งนี้ถูกนำไปเฉลี่ยให้รถจดทะเบียนแล้ว (ไม่นับเป็นของรถคันนี้)"
+      + (qO||cO ? `\n• เฉลี่ยให้รถจดทะเบียนในโรงงานเดียวกัน: ${nf(qO)} คิว / ${nf(cO)} บาท` : "")
+      + (qR||cR ? `\n• วิ่งแทนรถจดทะเบียน (รวมเข้ารถที่ถูกแทนแล้ว): ${nf(qR)} คิว / ${nf(cR)} บาท\n  ${x.rep_note}` : "");
+  }
+  return x.q_added ? `รวมคิวที่เฉลี่ยจากรถเสริม/รถสำรอง ${nf(x.q_added)} คิว / ${nf(x.c_added)} บาท` : "";
+}
 function vReward(root){
   const der = derive();
   kpiStrip(trucks());
@@ -2625,8 +2649,11 @@ function vReward(root){
     else if(x.g_missing) gm.title = "ไม่พบโรงงานนี้ในชีตการันตี";
     tr.appendChild(gm);
     tr.appendChild(el("td","n",nf(x.score)));
-    tr.appendChild(el("td","n",nf(x.qty)));
-    tr.appendChild(el("td","n",nf(x.revenue)));
+    const shared = isShared(x), smsg = shareNote(x);
+    const tq = el("td","n"+(shared?" neg":""), nf(qShown(x)));
+    const tc = el("td","n"+(shared?" neg":""), nf(cShown(x)));
+    if (smsg){ tq.title = smsg; tc.title = smsg; }
+    tr.appendChild(tq); tr.appendChild(tc);
     tr.appendChild(el("td","n",nf(x.pct,1)+"%"));
     const tt = el("td","c"); tt.innerHTML = tierTag(x.tier); tr.appendChild(tt);
     const rate = el("td","n",String(x.inc_rate));
@@ -3067,12 +3094,13 @@ function sheetSpec(){
   const dayHead = cols.map(c=> multi ? `${c.label} ${c.day}` : String(c.day));
   const orgCols = ORG.map(([k,l])=>({l, t:"str", w:16, f:x=>x[k]||""}));
 
-  if (TAB === "summary" || TAB === "summaryPlant"){
-    const g = curGB();
+  if (TAB === "summary" || TAB === "summaryPlant" || TAB === "overview"){
+    const ov = TAB === "overview";                 // ภาพรวม = สรุปตามกิจการ (เหมือนตารางบนหน้าจอ)
+    const g = ov ? GB.division : curGB();
     const fmtT = {int:"int", num2:"num2", money:"money"};
     return {
-      name:"สรุปราย-" + g.name,
-      rows: sortBy(summaryRows(), SORT[TAB]),
+      name: ov ? "สรุปตามกิจการ" : "สรุปราย-" + g.name,
+      rows: ov ? summaryRows(g).sort((a,b)=>b.net-a.net) : sortBy(summaryRows(), SORT[TAB]),
       freeze: g.cols.length,
       offset: 1,
       title: `สรุปรางวัลโครงการ TA100 ${scopeLabel()} เดือน ${rangeLabelTH()}`,
@@ -3136,8 +3164,10 @@ function sheetSpec(){
        note:x=>x.spare ? "รถเสริม — ไม่มีสิทธิ์ได้การันตี" : (x.t0ta ? "FLEET_TYPE_NO = T0TA — ไม่มีสิทธิ์ได้การันตี" : "")},
       {l:"วันหมดอายุ GT", t:"str", w:14, align:"center", f:x=>fmtDMY(x.gt)},
       {l:"คะแนนรวม", t:"num2", w:11, f:x=>x.score},
-      {l:"คิวรวม", t:"num2", w:11, f:x=>x.qty},
-      {l:"รายได้ค่าขนส่ง", t:"money", w:15, f:x=>x.revenue},
+      {l:"คิวรวม", t:"num2", w:11, f:x=>qShown(x), red:x=>isShared(x),
+       note:x=>shareNote(x)},
+      {l:"รายได้ค่าขนส่ง", t:"money", w:15, f:x=>cShown(x), red:x=>isShared(x),
+       note:x=>shareNote(x)},
       {l:"%TA", t:"pct", w:9, f:x=>x.pct},
       {l:"กลุ่ม TA", t:"str", w:9, align:"center", f:x=>x.tier, tier:true},
       {l:"อัตรา (บาท/คิว)", t:"int", w:13, f:x=>x.inc_rate,
@@ -3265,6 +3295,7 @@ function exportXLSX(){
           const opt = {align:col.align, bold:col.bold};
           if (col.fill) opt.fill = col.fill(v, row);
           if (col.tier && XC.tier[v]){ opt.fill = XC.tier[v][0]; opt.color = XC.tier[v][1]; opt.bold = true; }
+          if (col.red && col.red(row)) opt.color = XC.neg;
           if (typeof v === "number" && v < 0 && !opt.color) opt.color = XC.neg;
           const cell = xCell(v, col.t, opt);
           if (col.note){
