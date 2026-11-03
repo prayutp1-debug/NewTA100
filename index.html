@@ -328,7 +328,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","รถแทน"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 49;
+var ENGINE_VERSION = 50;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -464,7 +464,10 @@ function isPlantFix(dev, timeVal, status, rmk){
 }
 
 /* ── ตัวคำนวณหลัก ──────────────────────────────────────────── */
-var EARLY_GRACE_MIN = 15;   // กลับก่อนเวลาเลิกงานไม่เกิน 15 นาที ไม่หัก
+var EARLY_GRACE_MIN = 15;
+/* v83: สถานะ Punch out ที่เป็นพฤติกรรม จบส. (ตามชีต คะแนน-Punch คะแนนรถ = 1 ไม่หักด้วยสาเหตุสถานะ)
+   ยังต้องถูกหักจากสาเหตุอื่นตามปกติ เช่น กลับก่อนเวลาเลิกงาน / device_out = W */
+var JBS_OUT_RE = /^[PQRSFGHIJKDUVWXYZ]$/;   // กลับก่อนเวลาเลิกงานไม่เกิน 15 นาที ไม่หัก
 function buildDB(sheets, report){
   report = report || function(){};
   var punch = sheets["Punch"], reg = sheets["จดทะเบียน"], gar = sheets["การันตี"],
@@ -747,13 +750,15 @@ function buildDB(sheets, report){
     var dDevOut = 0, devOutWhy = "";   // ยอดหักที่เกิดจาก device_out = W โดยเฉพาะ
     var ot = timeSecs(cell(p,iOutTime));
     var po = plantOut[plantNo]; if (po == null) po = 17*3600;
+    var isJbsOut = JBS_OUT_RE.test(pout);
+    var normalOut = (pout === "O") || isJbsOut;       // สถานะที่ไม่ได้ถูกหักคะแนนจากตัวสถานะเอง
     var early = (ot == null) || (ot < po - EARLY_GRACE_MIN*60);   // Punch out ก่อนเวลาเลิกงานของโรงงาน เกินช่วงผ่อนผัน
 
     /* ไม่ใช้ SDA ตอน Punch out และกลับก่อนเวลาเลิกงาน = หัก 0.25
        (ถ้า Punch out หลังเวลาเลิกงานแล้ว ไม่ต้องระบุเหตุผลก็ไม่หัก) */
     var devOutWaived = false;
-    if (devOut === "W" && early && !moved && pout === "O"){   // v81: Punch out สถานะอื่นที่ถูกหักแล้ว ไม่หัก device_out ซ้ำ
-      if (pout === "O" && isRealOutReason(outRmk)){
+    if (devOut === "W" && early && !moved && normalOut){   // v81: Punch out สถานะอื่นที่ถูกหักแล้ว ไม่หัก device_out ซ้ำ
+      if (isRealOutReason(outRmk) && (pout === "O" || PLANT_OUT_RE.test(outRmk))){
         devOutWaived = true;      // โรงงานเช็คออกให้พร้อมเหตุผลจริง — ไม่หัก device_out
       } else {
         dDevOut = DED_SDA;
@@ -763,8 +768,9 @@ function buildDB(sheets, report){
     }
     if (pout === ""){
       dOut = DED_OUT_BLANK; outWhy = "ไม่มีข้อมูล Punch out";
-    } else if (pout === "O"){
-      /* v79: ใช้กับทุกอุปกรณ์ (รวม SDA = M) — กลับก่อนเวลาเลิกงานโดยไม่ระบุเหตุผล หัก 1
+    } else if (normalOut){
+      /* v83: สถานะ จบส. (P,Q,R,...) ก็เข้าเกณฑ์กลับก่อนเลิกงานเช่นเดียวกับ O — หมายเหตุของ จบส. คืออธิบายพฤติกรรม ไม่ใช่เหตุผลที่กลับก่อน
+         v79: ใช้กับทุกอุปกรณ์ (รวม SDA = M) — กลับก่อนเวลาเลิกงานโดยไม่ระบุเหตุผล หัก 1
          (ถ้า Punch out เป็นเวลาก่อน Punch in แปลว่าข้ามวัน ไม่ถือว่ากลับก่อน) */
       var inT0 = timeSecs(cell(p,iInTime));
       var crossDay = (ot != null && inT0 != null && ot < inT0);
@@ -776,7 +782,7 @@ function buildDB(sheets, report){
           dOut = -1;
           outWhy = "กลับก่อนเลิกงาน (Punch out " + otTxt + " / เลิกงาน " + hhmm(po) + ")";
         }
-      } else if (blankRemark(outRmk)){
+      } else if (blankRemark(outRmk) || (isJbsOut && !PLANT_OUT_RE.test(outRmk))){
         // กลับก่อนเลิกงานโดยไม่ระบุเหตุผล (ว่าง เคาะ จุด ขีด หรือ "ปกติ") = หัก 1
         if (early){
           dOut = -1;
@@ -1237,7 +1243,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 82;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 83;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -2091,7 +2097,7 @@ function render(){
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
-  if (D && D.meta && (D.meta.engine||0) < 49){
+  if (D && D.meta && (D.meta.engine||0) < 50){
     const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
     w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
   }
