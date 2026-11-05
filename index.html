@@ -325,10 +325,10 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
 /* ตัวเลือกการอ่าน Excel — ปรับให้เร็วที่สุด: ไม่สร้าง text/format ของทุกเซลล์,
    อ่านเฉพาะชีตที่ใช้, เก็บแบบ dense แล้วดึงออกมาเป็น array ตรง ๆ */
 var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, dense:true,
-                 sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","รถแทน"]};
+                 sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","รถแทน","Cost-Center"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 51;
+var ENGINE_VERSION = 52;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -667,6 +667,11 @@ function buildDB(sheets, report){
     var cOld = col(H, null, "รถเก่า"), cNew = col(H, null, "FLEET_TYPE_NO");
     return {old:+(cell(r,cOld)||0), t012:+(cell(r,cNew)||0)};
   });
+  /* v86: Cost Center-VC อ้างอิงจากโรงงาน — อ่านจากชีต Cost-Center (รหัสโรงงาน → Cost Center-VC)
+     ถ้าไม่มีชีตนี้ จะใช้คอลัมน์ Cost Center ในชีต จดทะเบียน (ถ้ายังมี) */
+  var CCP = readByPlant(sheets["Cost-Center"], function(r,H){
+    var c = col(H, null, "Cost Center"); return c >= 0 ? S(cell(r,c)) : null;
+  }).any;
   /* ── ทะเบียนรถ ── */
   var regByMonth = {}, regAny = {}, reportYM;
   if (reg && reg.length > 1){
@@ -685,7 +690,7 @@ function buildDB(sheets, report){
         division:S(cell(er,eDiv)), dept:S(cell(er,eDept)), sect:S(cell(er,eSect)),
         plant_no:S(cell(er,ePno)), plant:S(cell(er,ePl)),
         vendor:S(cell(er,eVen)), vendor_id:S(cell(er,eVid)),
-        acct:S(cell(er,eAcc)), cc:S(cell(er,eCC)), fleet:S(cell(er,eFl)), size:S(cell(er,eSz)),
+        acct:S(cell(er,eAcc)), cc:(CCP[S(cell(er,ePno))] || S(cell(er,eCC))), fleet:S(cell(er,eFl)), size:S(cell(er,eSz)),
         gt: gt ? ymKey(gt.y,gt.m)+"-"+(gt.d<10?"0":"")+gt.d : null,
         gt_ym: gt ? gt.y*12 + gt.m : null
       };
@@ -721,9 +726,49 @@ function buildDB(sheets, report){
   report("คำนวณคะแนนรายรายการ", .55);
   var detail = [], dayAgg = {}, fineRows = {}, drvInfo = {}, forfeit = {}, movePen = {};
 
+  /* v86: รถ 1 คัน วันเดียวกัน มี จบส. Punch มากกว่า 1 คน → เลือกรายการที่ได้คะแนนวันทำงานสูงสุด
+     รายการที่เหลือตัดทิ้ง (ไม่นำคะแนน เที่ยว คิว รายได้ มาคำนวณ) — รอบที่ 0 ใช้คำนวณคะแนนเฉพาะรายการที่เข้าข่าย */
+  var tdDrv = {}, candRow = {}, hasCand = false, rowInfo = {}, dropRow = {}, keptNote = {}, dropDecided = false;
+  function decideDrops(){
+    var grp = {};
+    for (var rr in rowInfo){ var ri = rowInfo[rr]; (grp[ri.k] || (grp[ri.k] = [])).push(+rr); }
+    for (var gk in grp){
+      var rows = grp[gk], best = null;
+      rows.forEach(function(rn){                       // เลือกคะแนนสูงสุด ถ้าเท่ากันเลือกที่มีเที่ยวมากกว่า แล้วเลือกแถวที่มาก่อน
+        var x = rowInfo[rn];
+        if (!best || x.net > best.net || (x.net === best.net && x.trips > best.trips)) best = x;
+      });
+      var others = [];
+      rows.forEach(function(rn){ var x = rowInfo[rn]; if (x.drv !== best.drv && others.indexOf(x.drv || "(ไม่ระบุ)") < 0) others.push(x.drv || "(ไม่ระบุ)"); });
+      rows.forEach(function(rn){
+        var x = rowInfo[rn];
+        if (x.drv !== best.drv) dropRow[rn] = best.drv || "(ไม่ระบุ)";
+        else keptNote[rn] = "• จบส. Punch หลายคนในวันเดียวกัน — ใช้รายการของ " + (best.drv || "(ไม่ระบุ)") +
+                            " (คะแนนวันทำงานสูงสุด) ตัดรายการของ " + others.join(", ") + " ทิ้ง";
+      });
+    }
+  }
+  if (iDrv >= 0){
+    for (var q0=1; q0<N; q0++){
+      if (!days[q0] || !yms[q0]) continue;
+      var dq = S(cell(punch[q0],iDrv)); if (!dq) continue;
+      var kq = S(cell(punch[q0],iTruck)) + "|" + yms[q0] + "|" + days[q0];
+      (tdDrv[kq] || (tdDrv[kq] = {}))[dq] = 1;
+    }
+    for (var q1=1; q1<N; q1++){
+      if (!days[q1] || !yms[q1]) continue;
+      var kq1 = S(cell(punch[q1],iTruck)) + "|" + yms[q1] + "|" + days[q1];
+      var dd1 = tdDrv[kq1]; if (!dd1) continue;
+      var cn = 0; for (var zz in dd1) cn++;
+      if (cn > 1){ candRow[q1] = kq1; hasCand = true; }
+    }
+  }
+  for (var pass = hasCand ? 0 : 1; pass < 2; pass++)
   for (var r0=1; r0<N; r0++){
+    if (pass === 1 && !dropDecided){ dropDecided = true; decideDrops(); }
     var p = punch[r0], day = days[r0], ym = yms[r0];
     if (!day || !ym) continue;
+    if (pass === 0 && !candRow[r0]) continue;
     var truck = S(cell(p,iTruck)), drv = iDrv>=0 ? S(cell(p,iDrv)) : "";
     var pin = S(cell(p,iPin)), pout = S(cell(p,iPout));
     var devIn = S(cell(p,iDevIn)), devOut = S(cell(p,iDevOut));
@@ -878,6 +923,8 @@ function buildDB(sheets, report){
     var ded = othDed + devDed;
     var pre = 1 + ded;
     var net = pre < 0 ? 0 : (pre > 1 ? 1 : pre);
+    if (pass === 0){ rowInfo[r0] = {k:candRow[r0], drv:drv, net:net, trips:trips}; continue; }
+    var dropped = !!dropRow[r0];
 
     var why2 = [];
     if (dIn < 0)
@@ -915,11 +962,13 @@ function buildDB(sheets, report){
     var nMulti = multi[drv + "|" + ym + "|" + day];
     if (nMulti) rmk.push("• Driver Punch " + nMulti + " คันในวันเดียวกัน");
     if (pout && FINE_ALL[pout]) rmk.push("• ตัดทั้งโครงการ");
+    if (dropped) rmk.push("• รถคันนี้มี จบส. Punch หลายคนในวันเดียวกัน — ตัดรายการนี้ทิ้ง (ใช้รายการของ " + dropRow[r0] + " ที่ได้คะแนนสูงกว่า) ไม่นำคะแนน เที่ยว คิว รายได้ มาคำนวณ");
+    else if (keptNote[r0]) rmk.push(keptNote[r0]);
 
     /* ── ตัดสิทธิ์เงินรางวัล บาท/คิว ── */
     var allcut = false;
     for (var rq4=0; rq4<hitRmk.length; rq4++) if (hitRmk[rq4].allcut) allcut = true;
-    if (pout === "J" || pout === "K" || allcut){
+    if (!dropped && (pout === "J" || pout === "K" || allcut)){
       var fk = truck + "|" + ym, fv = forfeit[fk] || (forfeit[fk] = {});
       var label = (pout === "J" || pout === "K")
         ? (MEANING["punch_out_status|"+pout] || S(cell(p,iPoutN)) || pout)
@@ -936,7 +985,7 @@ function buildDB(sheets, report){
       +net.toFixed(2), rmk.join(" / ")]);
 
     /* ไม่โยกรถ หรือ รหัส 8 ย้ายโรงงาน — หักเงินรางวัลของรถคันนั้น วันละ 1 ครั้ง */
-    if (!plantFix && (pout === "8" || mv2 === "refuse")){
+    if (!dropped && !plantFix && (pout === "8" || mv2 === "refuse")){
       var mk2 = truck + "|" + ym, mpv = movePen[mk2] || (movePen[mk2] = {d:{}, n:{}});
       if (!mpv.d[day]){
         var mvTxt = [];
@@ -948,7 +997,8 @@ function buildDB(sheets, report){
     }
 
     var ak = truck + "|" + ym + "|" + day, agg = dayAgg[ak];
-    if (!agg) agg = dayAgg[ak] = {ded:0, dev:0, rmk:[], qty:0, cost:0, trip:0, rows:0};
+    if (dropped){ agg = {ded:0, dev:0, rmk:[], qty:0, cost:0, trip:0, rows:1}; }    // รายการที่ตัดทิ้ง ไม่ส่งผลต่อรถ
+    else if (!agg) agg = dayAgg[ak] = {ded:0, dev:0, rmk:[], qty:0, cost:0, trip:0, rows:0};
     agg.ded += othDed;
     agg.dev += devDed;
     /* คิว รายได้ และเที่ยว เป็นยอด "ของทั้งวัน" ถ้าวันนั้นมีหลายแถว (คนขับหลายคน
@@ -1215,7 +1265,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
       NEEDED.forEach(function(name){
         sheets[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], AOA_OPTS);
       });
-      if (wb.Sheets["รถแทน"]) sheets["รถแทน"] = XLSX.utils.sheet_to_json(wb.Sheets["รถแทน"], AOA_OPTS);
+      ["รถแทน","Cost-Center"].forEach(function(nm){ if (wb.Sheets[nm]) sheets[nm] = XLSX.utils.sheet_to_json(wb.Sheets[nm], AOA_OPTS); });
       wb = null;
       var db = buildDB(sheets, function(t, p){ say(t, p); });
       sheets = null;
@@ -1254,7 +1304,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 85;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 86;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1374,7 +1424,7 @@ async function computeMain(source){
   stage("กำลังอ่านข้อมูล", .33); await pause();
   const sheets = {};
   NEEDED.forEach(n=>{ sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], AOA_OPTS); });
-  if (wb.Sheets["รถแทน"]) sheets["รถแทน"] = XLSX.utils.sheet_to_json(wb.Sheets["รถแทน"], AOA_OPTS);
+  ["รถแทน","Cost-Center"].forEach(nm=>{ if (wb.Sheets[nm]) sheets[nm] = XLSX.utils.sheet_to_json(wb.Sheets[nm], AOA_OPTS); });
   const db = buildDB(sheets, (t,p)=>stage(t,p));
   db.meta.src_size = source.size || 0;
   stage("กำลังจัดเก็บผลลัพธ์", .97); await pause();
@@ -2119,7 +2169,7 @@ function render(){
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
-  if (D && D.meta && (D.meta.engine||0) < 51){
+  if (D && D.meta && (D.meta.engine||0) < 52){
     const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
     w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
   }
