@@ -1254,7 +1254,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 84;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 85;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -3170,6 +3170,43 @@ function xCell(val, type, opt){
 }
 
 /** ข้อมูลของแต่ละแท็บ: หัวตาราง ชนิดข้อมูล ความกว้าง และตัวดึงค่า */
+/** ชีต "สรุปตามภาค" (แยกรายแผนกผลิต) สำหรับบันทึก Excel จากแท็บภาพรวม */
+function deptSheetSpec(fmtT){
+  const sectRows = summaryRows(GB.sect);
+  const byDept = {};
+  sectRows.forEach(o=>{
+    const k = (o.division||"") + "|" + (o.dept||"");
+    (byDept[k] || (byDept[k] = {division:o.division||"", dept:o.dept||"", rows:[]})).rows.push(o);
+  });
+  const sumOf = rs=>{
+    const z = {}; SUM_COLS.forEach(([k,,t])=>z[k]= t==="str" ? "" : 0);
+    rs.forEach(o=>SUM_COLS.forEach(([k,,t])=>{ if(t!=="str") z[k]+=o[k]; }));
+    return z;
+  };
+  const rows = [];
+  Object.values(byDept).sort((x,y)=>
+    x.division.localeCompare(y.division,"th") || x.dept.localeCompare(y.dept,"th",{numeric:true}))
+  .forEach(dp=>{
+    rows.push(Object.assign({kind:"dept", division:dp.division, dept:dp.dept||"(ไม่ระบุภาค)", sect:"รวมภาค"}, sumOf(dp.rows)));
+    dp.rows.slice().sort((x,y)=>(x.sect||"").localeCompare(y.sect||"","th",{numeric:true}))
+      .forEach(o=>rows.push(Object.assign({}, o, {kind:"sect", dept:dp.dept||"(ไม่ระบุภาค)", sect:o.sect||"(ไม่ระบุแผนก)"})));
+  });
+  rows.push(Object.assign({kind:"total", division:"รวม", dept:"", sect:""}, sumOf(sectRows)));
+  const hl = r=> r.kind==="dept" ? XC.total : (r.kind==="total" ? XC.total : null);
+  const bd = r=> r.kind !== "sect";
+  return {
+    name: "สรุปตามภาค",
+    rows, freeze: 3, offset: 1,
+    title: `สรุปรางวัลโครงการ TA100 ${scopeLabel()} สรุปตามภาค (แยกรายแผนกผลิต) เดือน ${rangeLabelTH()}`,
+    total: false,
+    cols: [["division","กิจการ",16],["dept","ภาค",14],["sect","แผนกผลิต",22]]
+      .map(([k,l,w])=>({l, t:"str", w, f:x=>x[k]||"", txt:true, fill:(v,r)=>hl(r), rowBold:bd}))
+      .concat(SUM_COLS.map(([k,l,t,w])=>
+        t==="str" ? {l, t:"str", w:w||20, f:x=>x[k]||"", fill:(v,r)=>hl(r), rowBold:bd}
+                  : {l, t:fmtT[t]||"money", w:w||14, f:x=>x[k], fill:(v,r)=>hl(r), rowBold:bd}))
+  };
+}
+
 function sheetSpec(){
   const der = derive(), cols = der.cols, multi = der.months.length > 1;
   const dayHead = cols.map(c=> multi ? `${c.label} ${c.day}` : String(c.day));
@@ -3180,6 +3217,7 @@ function sheetSpec(){
     const g = ov ? GB.division : curGB();
     const fmtT = {int:"int", num2:"num2", money:"money"};
     return {
+      extra: ov ? [deptSheetSpec(fmtT)] : undefined,      // v85: ภาพรวม = ชีต สรุปตามกิจการ + ชีต สรุปตามภาค
       name: ov ? "สรุปตามกิจการ" : "สรุปราย-" + g.name,
       rows: ov ? summaryRows(g).sort((a,b)=>b.net-a.net) : sortBy(summaryRows(), SORT[TAB]),
       freeze: g.cols.length,
@@ -3342,7 +3380,8 @@ function sheetSpec(){
 function exportXLSX(){
   const spec = sheetSpec();
   if (!spec.rows.length){ alert("ไม่มีข้อมูลให้บันทึก"); return; }
-  const heavy = spec.rows.length * spec.cols.length > 120000;
+  const specs = [spec].concat(spec.extra || []);
+  const heavy = specs.reduce((a,sp)=>a+sp.rows.length*sp.cols.length,0) > 120000;
   $("#overlay").hidden = false;
   $("#ld-fail").innerHTML = ""; $("#ld-bar").parentElement.hidden = false;
   $("#ld-title").textContent = "กำลังสร้างไฟล์ Excel";
@@ -3355,6 +3394,8 @@ function exportXLSX(){
       stage("กำลังใส่สีและเส้นตาราง", .35);
       await new Promise(r=>setTimeout(r,30));
 
+     const sheets = specs.map(sp=>buildWs(sp));
+     function buildWs(spec){
       const C = spec.cols, ws = {}, WCH = C.map(c=>c.w||12);
       const OFF = spec.offset || 0;          // เว้นคอลัมน์ซ้ายไว้กี่ช่อง
       const TOP = spec.title ? 1 : 0;        // แถวหัวเรื่อง
@@ -3377,6 +3418,7 @@ function exportXLSX(){
           if (col.fill) opt.fill = col.fill(v, row);
           if (col.tier && XC.tier[v]){ opt.fill = XC.tier[v][0]; opt.color = XC.tier[v][1]; opt.bold = true; }
           if (col.red && col.red(row)) opt.color = XC.neg;
+          if (col.rowBold && col.rowBold(row)) opt.bold = true;
           if (typeof v === "number" && v < 0 && !opt.color) opt.color = XC.neg;
           const cell = xCell(v, col.t, opt);
           if (col.note){
@@ -3409,11 +3451,13 @@ function exportXLSX(){
       ws["!cols"] = (OFF? [{wch:2}] : []).concat(C.map(c=>({wch:c.w||12})));
       ws["!rows"] = TOP ? [{hpt:26},{hpt:30}] : [{hpt:22}];
       ws["!autofilter"] = {ref: XLSX.utils.encode_range({s:{r:TOP,c:OFF}, e:{r:last, c:OFF+C.length-1}})};
+      return ws;
+     }
 
       stage("กำลังเขียนไฟล์", .8);
       await new Promise(r=>setTimeout(r,30));
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, spec.name.slice(0,31));
+      sheets.forEach((w_,i)=>XLSX.utils.book_append_sheet(wb, w_, specs[i].name.slice(0,31)));
       const buf = XLSX.write(wb, {type:"array", bookType:"xlsx", compression:true});
 
       stage("เสร็จ", 1);
@@ -3421,7 +3465,7 @@ function exportXLSX(){
       a.href = URL.createObjectURL(new Blob([buf],
         {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
       const ar = activeRange();
-      a.download = `TA_${spec.name}_${ar[0]}${ar[0]!==ar[1]?"_"+ar[1]:""}.xlsx`;
+      a.download = `TA_${specs.length>1 ? "ภาพรวม" : spec.name}_${ar[0]}${ar[0]!==ar[1]?"_"+ar[1]:""}.xlsx`;
       a.click();
       setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
       $("#overlay").hidden = true;
