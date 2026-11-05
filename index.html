@@ -328,7 +328,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","รถแทน"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 50;
+var ENGINE_VERSION = 51;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -1101,7 +1101,18 @@ function buildDB(sheets, report){
     var m = {};
     mk.forEach(function(ym3){
       var src = perMonth[ym3];
-      var gm = lookup(G, ym3, info.plant_no);
+      /* v84: ข้อมูลรถ (สถานะรถบัญชี กิจการ โรงงาน ผู้รับเหมา ฯลฯ) ตามเดือนนั้น ๆ ในชีต จดทะเบียน
+         เก็บเฉพาะคีย์ที่ต่างจากข้อมูลระดับคัน (ใช้เดือนล่าสุด) */
+      var imo = regOf(tn, ym3), idf = null;
+      var IK = ["division","dept","sect","plant_no","plant","cc","vendor","vendor_id","fleet","size","gt","gt_ym"];
+      for (var ik=0; ik<IK.length; ik++){
+        var a1 = imo[IK[ik]] == null ? "" : imo[IK[ik]], b1 = info[IK[ik]] == null ? "" : info[IK[ik]];
+        if (a1 !== b1) (idf || (idf = {}))[IK[ik]] = (imo[IK[ik]] == null ? (IK[ik]==="gt"||IK[ik]==="gt_ym" ? null : "") : imo[IK[ik]]);
+      }
+      if (acctGroup(imo.acct) !== acctGroup(info.acct) || (imo.acct||"") !== (info.acct||"")){
+        (idf || (idf = {})).acct = acctGroup(imo.acct); idf.acct_raw = imo.acct || ""; idf.spare = acctGroup(imo.acct) === "รถเสริม";
+      }
+      var gm = lookup(G, ym3, imo.plant_no);
 
       var fk2 = forfeit[tn + "|" + ym3];
       var mp2 = movePen[tn + "|" + ym3];
@@ -1111,7 +1122,7 @@ function buildDB(sheets, report){
         d: src.d, r: src.r, qd: src.qd, td: src.td, rep: src.rep,
         q: +src.q.toFixed(2), c: +src.c.toFixed(2),
         q0: src.q0, c0: src.c0, aq: src.aq, ac: src.ac, rq: src.rq, rc: src.rc, rn: src.rn,
-        nsp: src.nsp, moved: src.moved ? 1 : 0,
+        nsp: src.nsp, moved: src.moved ? 1 : 0, i: idf || undefined,
         gb: gm ? gm.old : 0, gt: gm ? gm.t012 : 0, gm: gm ? 0 : 1,
         z: fk2 ? 1 : 0,
         zr: fk2 ? Object.keys(fk2).join(" / ") : "",
@@ -1243,7 +1254,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 83;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 84;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1702,6 +1713,7 @@ function boot(db, cached){
   DETAIL = D.detail;
   DETAIL.idx = {}; DETAIL.cols.forEach((c,i)=>DETAIL.idx[c]=i);
   DETAIL.org = {}; D.trucks.forEach(t=>DETAIL.org[t.truck]=t);
+  DETAIL.orgM = {};
   MONTHS = D.meta.months || [];
   F.m1 = MONTHS.length ? MONTHS[0].key : "";
   F.m2 = MONTHS.length ? MONTHS[MONTHS.length-1].key : "";
@@ -1826,7 +1838,10 @@ function computeRange(rm){
   const lastYM = rm.length ? rm[rm.length-1].year*12 + rm[rm.length-1].month : 0;
 
   const trucks = [], allow = {};
-  for (const t of D.trucks){
+  const lastK = keys.length ? keys[keys.length-1] : "";
+  for (const t0 of D.trucks){
+    const mi0 = t0.m[lastK];
+    const t = (mi0 && mi0.i) ? Object.assign({}, t0, mi0.i) : t0;   // v84: ใช้สถานะ/โรงงาน/ผู้รับเหมาของเดือนที่เลือก
     if (!canSee(t)) continue;
     let score = 0, qty = 0, cost = 0, gBase = 0, movePen = 0;
     let movedQ = 0, movedC = 0, repQ = 0, repC = 0, addedQ = 0, addedC = 0, nSpare = 0, gFull = 0;
@@ -2006,6 +2021,13 @@ function syncFilters(){
   opts("f-tier", D.tiers.map(x=>x.name), F.tier, "ทุกกลุ่ม", "tier");
 }
 
+/* ข้อมูลองค์กรของรถในเดือนนั้น ๆ (v84) */
+function orgOf(truck, ym){
+  const t = DETAIL.org[truck]; if (!t) return t;
+  const mi = t.m && t.m[ym]; if (!mi || !mi.i) return t;
+  const k = truck + "|" + ym;
+  return DETAIL.orgM[k] || (DETAIL.orgM[k] = Object.assign({}, t, mi.i));
+}
 function matchOrg(x){
   return inF("division",x.division) && inF("dept",x.dept) && inF("sect",x.sect)
       && inF("plant",x.plant) && inF("vendor",x.vendor);
@@ -2097,7 +2119,7 @@ function render(){
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
-  if (D && D.meta && (D.meta.engine||0) < 50){
+  if (D && D.meta && (D.meta.engine||0) < 51){
     const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
     w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
   }
@@ -2242,6 +2264,51 @@ function vOverview(root){
   p2.style.gridColumn="1 / -1";
   PN.div=p2;
 
+  /* 1d-1. สรุปตามภาค แยกรายละเอียดเป็นรายแผนกผลิต (v84) — คอลัมน์เหมือนสรุปตามกิจการ */
+  const sectRows = summaryRows(GB.sect);
+  const byDept = {};
+  sectRows.forEach(o=>{
+    const k = (o.division||"") + "|" + (o.dept||"");
+    (byDept[k] || (byDept[k] = {division:o.division||"", dept:o.dept||"", rows:[]})).rows.push(o);
+  });
+  const deptList = Object.values(byDept).sort((x,y)=>
+    (x.division||"").localeCompare(y.division||"","th") || (x.dept||"").localeCompare(y.dept||"","th",{numeric:true}));
+  const tbD = el("table"); const hrD = el("tr");
+  hrD.appendChild(el("th","sticky-l","ภาค / แผนกผลิต"));
+  SUM_COLS.forEach(([k,l,t])=> hrD.appendChild(el("th", t==="str"?null:"n", l)));
+  const thD = el("thead"); thD.appendChild(hrD); tbD.appendChild(thD);
+  const tbodyD = el("tbody");
+  const addD = (label, o, kind)=>{
+    const tr2 = el("tr");
+    if(kind==="dept"){ tr2.style.fontWeight="600"; tr2.style.background="#eef2fb"; }
+    if(kind==="total"){ tr2.style.fontWeight="700"; tr2.style.background="#dfe6f7"; }
+    const c0 = el("td","sticky-l"); c0.textContent = label;
+    if(kind==="sect") c0.style.paddingLeft = "26px";
+    tr2.appendChild(c0);
+    SUM_COLS.forEach(([k,,t])=>{
+      if(t==="str"){ tr2.appendChild(el("td",o[k]?"neg":null,o[k]||"")); return; }
+      const td = el("td","n"+(o[k]<0?" neg":""), fmtS(o[k],t));
+      if(k==="net") td.style.fontWeight="600";
+      tr2.appendChild(td);
+    });
+    tbodyD.appendChild(tr2);
+  };
+  const sumOf = rs=>{
+    const z = {}; SUM_COLS.forEach(([k,,t])=>z[k]= t==="str" ? "" : 0);
+    rs.forEach(o=>SUM_COLS.forEach(([k,,t])=>{ if(t!=="str") z[k]+=o[k]; }));
+    return z;
+  };
+  deptList.forEach(dp=>{
+    addD((dp.division ? dp.division + " · " : "") + (dp.dept || "(ไม่ระบุภาค)"), sumOf(dp.rows), "dept");
+    dp.rows.slice().sort((x,y)=>(x.sect||"").localeCompare(y.sect||"","th",{numeric:true}))
+      .forEach(o=>addD(o.sect || "(ไม่ระบุแผนก)", o, "sect"));
+  });
+  addD("รวม", sumOf(sectRows), "total");
+  tbD.appendChild(tbodyD);
+  const pD = panel("สรุปตามภาค", rangeLabelTH() + " · แยกรายละเอียดเป็นรายแผนกผลิต", tbD);
+  pD.style.gridColumn = "1 / -1";
+  PN.dept = pD;
+
   /* 1d-2. สรุปรายเดือน + กราฟเปรียบเทียบ */
   const MON_COLS = [["incentive","รางวัล Incentive"],["guarantee","การันตี"],
                     ["deduct","รายการหัก"],["fine","หักเงิน จบส."],["net","คงเหลือรางวัลสุทธิ"]];
@@ -2310,8 +2377,8 @@ function vOverview(root){
   wt.appendChild(wb);
   PN.worst = panel("15 คันที่ %TA ต่ำที่สุด","เสี่ยงโดนหักเงินรางวัล", wt);
 
-  /* ลำดับบล็อก: กิจการ → รางวัลรายเดือน+กราฟ → 15 คัน %TA ต่ำสุด → รายผู้รับเหมา → กระจายกลุ่ม TA → กลุ่ม TA รายกิจการ */
-  ["div","month","worst","vendor","dist","divTier"].forEach(k=>{ if(PN[k]) g.appendChild(PN[k]); });
+  /* ลำดับบล็อก: กิจการ → ภาค/แผนก → รางวัลรายเดือน+กราฟ → 15 คัน %TA ต่ำสุด → รายผู้รับเหมา → กระจายกลุ่ม TA → กลุ่ม TA รายกิจการ */
+  ["div","dept","month","worst","vendor","dist","divTier"].forEach(k=>{ if(PN[k]) g.appendChild(PN[k]); });
   root.appendChild(g);
 }
 
@@ -2782,7 +2849,7 @@ function vDetail(root){
   const multi = derive().months.length > 1;
   const rows = DETAIL.rows.filter(r=>{
     if(!inRange[r[I.ym]] || !allow[r[I.truck]]) return false;
-    const o = DETAIL.org[r[I.truck]];
+    const o = orgOf(r[I.truck], r[I.ym]);
     if(!o || !matchOrg(o)) return false;
     if(F.tier.length){ const dt = derive().trucks.find(x=>x.truck===r[I.truck]); if(!dt || !inF("tier",dt.tier)) return false; }
     if(q && !(r[I.truck].toLowerCase().includes(q) || r[I.driver].toLowerCase().includes(q))) return false;
@@ -3227,7 +3294,7 @@ function sheetSpec(){
     const inRange = {}; der.keys.forEach(k=>inRange[k]=1);
     const rows = DETAIL.rows.filter(r=>{
       if(!inRange[r[I.ym]] || !der.allow[r[I.truck]]) return false;
-      const o = DETAIL.org[r[I.truck]];
+      const o = orgOf(r[I.truck], r[I.ym]);
       if(!o || !matchOrg(o)) return false;
       if(F.tier.length){ const dt = der.trucks.find(x=>x.truck===r[I.truck]); if(!dt || !inF("tier",dt.tier)) return false; }
       return !q || r[I.truck].toLowerCase().includes(q) || r[I.driver].toLowerCase().includes(q);
