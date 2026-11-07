@@ -328,7 +328,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","รถแทน","Cost-Center"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 52;
+var ENGINE_VERSION = 53;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -748,16 +748,56 @@ function buildDB(sheets, report){
       });
     }
   }
+  /* v87: รถ 1 คัน Punch 2 โรงงานในวันเดียวกัน และมี punch_out_status = "8" (ย้ายโรงงาน) ≥ 1 ครั้ง
+     → รวมเป็น "วันทำงานเดียว": Punch in = ครั้งแรก (เวลาน้อยสุด), Punch out = ครั้งหลังสุด (เวลามากสุด)
+     ไม่หักเงินย้ายโรงงาน 1,000 และไม่นับมาสายของโรงงานที่ย้ายไป · ไม่สนใจว่า driver_no เป็นคนเดิมหรือคนละคน */
+  var mergeOut = {}, mergedAway = {}, mergeKey = {}, mergeNote = {};
+  (function(){
+    var tdRows = {};
+    for (var m0=1; m0<N; m0++){
+      if (!days[m0] || !yms[m0]) continue;
+      var km = S(cell(punch[m0],iTruck)) + "|" + yms[m0] + "|" + days[m0];
+      (tdRows[km] || (tdRows[km] = [])).push(m0);
+    }
+    for (var kk in tdRows){
+      var rs = tdRows[kk]; if (rs.length < 2) continue;
+      var has8 = false, pls = {}, npl = 0;
+      rs.forEach(function(rn){
+        if (S(cell(punch[rn],iPout)) === "8") has8 = true;
+        var pn = S(cell(punch[rn],iPlant)); if (!pls[pn]){ pls[pn] = 1; npl++; }
+      });
+      if (!has8 || npl < 2) continue;
+      var inR = -1, inT = 1e9, outR = -1, outT = -1;
+      rs.forEach(function(rn){
+        var ti = timeSecs(cell(punch[rn],iInTime)), to = timeSecs(cell(punch[rn],iOutTime));
+        if (ti != null && ti < inT){ inT = ti; inR = rn; }
+        if (to != null && to >= outT){ outT = to; outR = rn; }
+      });
+      if (inR < 0) inR = rs[0];
+      if (outR < 0) outR = rs[rs.length-1];
+      mergeKey[kk] = 1;
+      var plIn = S(cell(punch[inR],iPlantN)), plOut = S(cell(punch[outR],iPlantN));
+      var note = "• รถ Punch " + npl + " โรงงานในวันเดียวกัน (มี Punch out = 8 ย้ายโรงงาน) — คิดเป็นวันทำงานเดียว: Punch in ครั้งแรก " +
+                 hhmm(inT) + (plIn ? " (" + plIn + ")" : "") + " · Punch out ครั้งหลังสุด " + (outT >= 0 ? hhmm(outT) : "ไม่มีเวลา") +
+                 (plOut ? " (" + plOut + ")" : "") + " · ไม่หักเงินย้ายโรงงาน และไม่นับมาสายของโรงงานที่ย้ายไป";
+      rs.forEach(function(rn){
+        if (rn === inR){ mergeOut[rn] = outR; mergeNote[rn] = note; }
+        else mergedAway[rn] = inR;
+      });
+    }
+  })();
   if (iDrv >= 0){
     for (var q0=1; q0<N; q0++){
       if (!days[q0] || !yms[q0]) continue;
       var dq = S(cell(punch[q0],iDrv)); if (!dq) continue;
       var kq = S(cell(punch[q0],iTruck)) + "|" + yms[q0] + "|" + days[q0];
+      if (mergeKey[kq]) continue;
       (tdDrv[kq] || (tdDrv[kq] = {}))[dq] = 1;
     }
     for (var q1=1; q1<N; q1++){
       if (!days[q1] || !yms[q1]) continue;
       var kq1 = S(cell(punch[q1],iTruck)) + "|" + yms[q1] + "|" + days[q1];
+      if (mergeKey[kq1]) continue;
       var dd1 = tdDrv[kq1]; if (!dd1) continue;
       var cn = 0; for (var zz in dd1) cn++;
       if (cn > 1){ candRow[q1] = kq1; hasCand = true; }
@@ -769,10 +809,16 @@ function buildDB(sheets, report){
     var p = punch[r0], day = days[r0], ym = yms[r0];
     if (!day || !ym) continue;
     if (pass === 0 && !candRow[r0]) continue;
+    var oRow = (pass === 1 && mergeOut[r0] != null) ? punch[mergeOut[r0]] : null;
+    if (oRow){                                    // ใช้ข้อมูล Punch out ของรายการหลังสุด
+      p = p.slice();
+      [iOutTime, iPout, iPoutN, iDevOut, iOutRmk].forEach(function(ix){ if (ix >= 0) p[ix] = oRow[ix]; });
+    }
     var truck = S(cell(p,iTruck)), drv = iDrv>=0 ? S(cell(p,iDrv)) : "";
     var pin = S(cell(p,iPin)), pout = S(cell(p,iPout));
     var devIn = S(cell(p,iDevIn)), devOut = S(cell(p,iDevOut));
     var plantNo = S(cell(p,iPlant));
+    var plantOutNo = oRow ? S(cell(oRow,iPlant)) : plantNo;
     var outRmk = S(cell(p,iOutRmk));
     var inRmk  = S(cell(p,iInRmk));
 
@@ -794,7 +840,7 @@ function buildDB(sheets, report){
     var dOut = 0, outWhy = "";
     var dDevOut = 0, devOutWhy = "";   // ยอดหักที่เกิดจาก device_out = W โดยเฉพาะ
     var ot = timeSecs(cell(p,iOutTime));
-    var po = plantOut[plantNo]; if (po == null) po = 17*3600;
+    var po = plantOut[plantOutNo]; if (po == null) po = 17*3600;
     var isJbsOut = JBS_OUT_RE.test(pout);
     var normalOut = (pout === "O") || isJbsOut;       // สถานะที่ไม่ได้ถูกหักคะแนนจากตัวสถานะเอง
     var early = (ot == null) || (ot < po - EARLY_GRACE_MIN*60);   // Punch out ก่อนเวลาเลิกงานของโรงงาน เกินช่วงผ่อนผัน
@@ -924,7 +970,7 @@ function buildDB(sheets, report){
     var pre = 1 + ded;
     var net = pre < 0 ? 0 : (pre > 1 ? 1 : pre);
     if (pass === 0){ rowInfo[r0] = {k:candRow[r0], drv:drv, net:net, trips:trips}; continue; }
-    var dropped = !!dropRow[r0];
+    var dropped = !!dropRow[r0] || mergedAway[r0] != null;
 
     var why2 = [];
     if (dIn < 0)
@@ -962,7 +1008,10 @@ function buildDB(sheets, report){
     var nMulti = multi[drv + "|" + ym + "|" + day];
     if (nMulti) rmk.push("• Driver Punch " + nMulti + " คันในวันเดียวกัน");
     if (pout && FINE_ALL[pout]) rmk.push("• ตัดทั้งโครงการ");
-    if (dropped) rmk.push("• รถคันนี้มี จบส. Punch หลายคนในวันเดียวกัน — ตัดรายการนี้ทิ้ง (ใช้รายการของ " + dropRow[r0] + " ที่ได้คะแนนสูงกว่า) ไม่นำคะแนน เที่ยว คิว รายได้ มาคำนวณ");
+    if (mergedAway[r0] != null) rmk.push("• รถ Punch หลายโรงงานในวันเดียวกัน (มี Punch out = 8) — รวมเป็นวันทำงานเดียวกับรายการ Punch in ครั้งแรก ไม่คำนวณแยก");
+    else if (mergeNote[r0]) rmk.push(mergeNote[r0]);
+    if (mergedAway[r0] != null){ /* ข้อความด้านบน */ }
+    else if (dropped) rmk.push("• รถคันนี้มี จบส. Punch หลายคนในวันเดียวกัน — ตัดรายการนี้ทิ้ง (ใช้รายการของ " + dropRow[r0] + " ที่ได้คะแนนสูงกว่า) ไม่นำคะแนน เที่ยว คิว รายได้ มาคำนวณ");
     else if (keptNote[r0]) rmk.push(keptNote[r0]);
 
     /* ── ตัดสิทธิ์เงินรางวัล บาท/คิว ── */
@@ -1304,7 +1353,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 86;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 87;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -2169,7 +2218,7 @@ function render(){
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
-  if (D && D.meta && (D.meta.engine||0) < 52){
+  if (D && D.meta && (D.meta.engine||0) < 53){
     const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
     w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
   }
