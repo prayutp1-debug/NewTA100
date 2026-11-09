@@ -254,6 +254,10 @@ body.locked header, body.locked .wrap{display:none !important}
       <button type="button" class="linkbtn" id="pwOpenLogin" style="margin:0">เปลี่ยนรหัสผ่าน</button>
       <button type="button" class="linkbtn" id="fgOpen" style="margin:0">ลืมรหัสผ่าน?</button>
     </div>
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid #e2e8f0;text-align:center">
+      <div style="font-size:12.5px;color:var(--ink-3);margin-bottom:8px">สำหรับ จบส. (คนขับ)</div>
+      <button type="button" class="btn" id="jbsOpen" style="width:100%;padding:11px;font-weight:600">🔎 ตรวจสอบข้อมูล จบส. — ไม่ต้องใช้ผู้ใช้/รหัสผ่าน</button>
+    </div>
   </form>
 </div>
 
@@ -1353,7 +1357,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 87;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 89;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1618,7 +1622,7 @@ async function load(opts){
 
 const TABS = [
   ["overview","ภาพรวม"],["summary","สรุปโครงการ"],["summaryPlant","สรุปโครงการ-รายโรงงาน"],["score","คะแนนรายวัน"],["scoreDay","คะแนนวันทำงาน"],["reward","คำนวณรางวัล"],
-  ["fine","หักเงิน จบส."],["detail","รายละเอียด Punch"],["rules","เกณฑ์คะแนน"]
+  ["fine","หักเงิน จบส."],["detail","รายละเอียด Punch"],["rules","เกณฑ์คะแนน"],["jbs","ข้อมูล จบส."]
 ];
 
 let MONTHS = [], DERIVED = null;
@@ -1822,7 +1826,8 @@ function boot(db, cached){
   $("#overlay").hidden = true;
   $("#hd-actions").hidden = false;
   const ln = $("#loadNote");
-  if (SRC.excelMonths){
+  if (SESSION && SESSION.jbs){ ln.hidden = true; ln.innerHTML = ""; }
+  else if (SRC.excelMonths){
     ln.hidden = false;
     ln.innerHTML = "<b>อ่านไฟล์ " + esc(SRC.name||"Excel") + " สำเร็จ</b> — พบข้อมูลใน Excel: " +
       SRC.excelMonths.map(esc).join(" · ") +
@@ -1870,7 +1875,12 @@ function boot(db, cached){
   const nav = $("#tabs");
   nav.innerHTML = "";
   const HIDE_NORMAL = ["overview","summary","summaryPlant","reward"];   // สถานะ NORMAL ไม่เห็นแท็บเหล่านี้
-  const tabsShown = TABS.filter(([id])=> !(SESSION && SESSION.normal && HIDE_NORMAL.indexOf(id) >= 0));
+  /* v88: แท็บ "ข้อมูล จบส." — เห็นเฉพาะ admin (sirilukt) · ผู้เข้าผ่านกล่อง จบส. เห็นแท็บนี้แท็บเดียว */
+  const tabsShown = TABS.filter(([id])=>{
+    if (SESSION && SESSION.jbs) return id === "jbs";
+    if (id === "jbs") return !!(SESSION && SESSION.admin);
+    return !(SESSION && SESSION.normal && HIDE_NORMAL.indexOf(id) >= 0);
+  });
   if (!tabsShown.some(([id])=>id===TAB)) TAB = tabsShown.length ? tabsShown[0][0] : TAB;
   tabsShown.forEach(([id,label])=>{
     const b = el("button",null,label);
@@ -2212,7 +2222,7 @@ function hintBox(text){ return el("p","hint",text); }
 function render(){
   document.querySelectorAll("#tabs button").forEach(b=>
     b.setAttribute("aria-selected", b.dataset.tab===TAB));
-  $("#filters").hidden = (TAB==="rules");
+  $("#filters").hidden = (TAB==="rules" || TAB==="jbs");
   const gw = $("#f-gb-wrap"); if(gw) gw.hidden = (TAB!=="summary");
   [["f-mo-wrap",false],["f-m1-wrap",true],["f-m2-wrap",true]].forEach(([id,h])=>{
     const e = $("#"+id); if(e) e.hidden = h;
@@ -2222,7 +2232,7 @@ function render(){
     const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
     w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
   }
-  ({overview:vOverview,summary:vSummary,summaryPlant:vSummary,score:vScore,scoreDay:vScore,reward:vReward,fine:vFine,detail:vDetail,rules:vRules}[TAB])(v);
+  ({overview:vOverview,summary:vSummary,summaryPlant:vSummary,score:vScore,scoreDay:vScore,reward:vReward,fine:vFine,detail:vDetail,rules:vRules,jbs:vJbs}[TAB])(v);
 }
 
 /* ── 1. ภาพรวม ────────────────────────────────────────────── */
@@ -3006,6 +3016,112 @@ function vDetail(root){
     `${n0(rows.length)} รายการ · ${rangeLabel()}`, tb, pager("detail",rows.length,PER.detail)));
 }
 
+/* ── 7. ข้อมูล จบส. (ค้นหาด้วยรหัส จบส.) ─────────────────── */
+const JBS = {q:"", cache:{}};
+function jbsTrucks(ym){          // คะแนน/%TA ของทุกคันในเดือนนั้น (ไม่ผูกกับตัวกรองหน้าจอ)
+  if (!JBS.cache[ym]){
+    const m = MONTHS.find(x=>x.key===ym), o = {};
+    computeRange([m]).trucks.forEach(t=>o[t.truck]=t);
+    JBS.cache[ym] = o;
+  }
+  return JBS.cache[ym];
+}
+function vJbs(root){
+  $("#kpis").innerHTML = ""; $("#period").textContent = "";
+  const box = el("div"); box.style.padding = "14px";
+  const row = el("div"); row.style.cssText = "display:flex;gap:9px;flex-wrap:wrap;align-items:center";
+  const inp = el("input"); inp.type = "search"; inp.id = "jbsq"; inp.value = JBS.q;
+  inp.placeholder = "กรอกรหัส จบส. เช่น ON0447"; inp.autocomplete = "off";
+  inp.style.cssText = "padding:10px 12px;border:1px solid var(--rule);border-radius:6px;font-size:15px;min-width:240px;flex:1;max-width:360px";
+  const go = el("button","btn primary","ค้นหา"); go.style.padding = "10px 22px";
+  row.appendChild(inp); row.appendChild(go);
+  if (SESSION && SESSION.jbs && !JBS_LINK){
+    const back = el("button","btn","กลับหน้าเข้าสู่ระบบ"); back.style.padding = "10px 14px";
+    back.onclick = ()=>location.reload(); row.appendChild(back);
+  }
+  box.appendChild(row);
+  const out = el("div"); out.style.marginTop = "14px"; box.appendChild(out);
+  root.appendChild(panel("ค้นหาข้อมูล จบส.", "กรอกรหัส จบส. (driver_no) แล้วกดค้นหา · แสดงเวลา In/Out เรื่องที่ถูกหัก คะแนนสุทธิรายวัน และ %TA", box));
+  const doSearch = ()=>{ JBS.q = inp.value.trim(); jbsResult(out, JBS.q); };
+  go.onclick = doSearch;
+  inp.onkeydown = e=>{ if (e.key === "Enter"){ e.preventDefault(); doSearch(); } };
+  if (JBS.q) jbsResult(out, JBS.q); else setTimeout(()=>inp.focus(), 30);
+}
+function jbsResult(out, code){
+  out.innerHTML = "";
+  if (!code){ out.appendChild(el("div","empty","กรุณากรอกรหัส จบส.")); return; }
+  const I = DETAIL.idx, key = code.toUpperCase();
+  const rows = DETAIL.rows.filter(r=>String(r[I.driver]).toUpperCase() === key);
+  if (!rows.length){
+    out.appendChild(el("div","empty","ไม่พบข้อมูลของรหัส จบส. “" + code + "” — ตรวจสอบรหัสอีกครั้ง (เช่น ON0447)"));
+    return;
+  }
+  const dv = (D.drivers||[]).find(x=>String(x.driver).toUpperCase() === key);
+  const months = MONTHS.map(m=>m.key).filter(k=>rows.some(r=>r[I.ym] === k)).reverse();   // เดือนล่าสุดก่อน
+  const first = rows[0];
+  const info = el("p","hint", "รหัส จบส. " + String(first[I.driver]) + (dv && dv.vendor ? " · ผู้รับเหมา " + dv.vendor : "") +
+    " · พบข้อมูล " + months.length + " เดือน (" + n0(rows.length) + " รายการ Punch)");
+  out.appendChild(info);
+
+  months.forEach(ym=>{
+    const mo = MONTHS.find(m=>m.key === ym);
+    const T = jbsTrucks(ym);
+    const rs = rows.filter(r=>r[I.ym] === ym).sort((a,b)=>a[I.day]-b[I.day] || String(a[I.punch_in_time]).localeCompare(String(b[I.punch_in_time])));
+    const tb = el("table"), hr = el("tr");
+    [["วันที่","c"],["เบอร์รถ",""],["โรงงาน",""],["เวลา In","c"],["เวลา Out","c"],["เรื่องที่ถูกหัก",""],
+     ["คะแนนสุทธิวันนั้น (ของรถ)","n"],["หักเงิน จบส. (บาท)","n"]].forEach(([l,a])=>hr.appendChild(el("th",a,l)));
+    const th = el("thead"); th.appendChild(hr); tb.appendChild(th);
+    const tbody = el("tbody");
+    rs.forEach(r=>{
+      const tk = T[r[I.truck]];
+      const dayScore = tk && tk.days[ym] ? tk.days[ym][r[I.day]] : null;
+      const tr = el("tr");
+      tr.appendChild(el("td","c",String(r[I.day])));
+      tr.appendChild(el("td","truck",r[I.truck]));
+      tr.appendChild(el("td",null,(r[I.plant_name]||"") + (r[I.plant_no] ? " (" + r[I.plant_no] + ")" : "")));
+      tr.appendChild(el("td","c",r[I.punch_in_time] || "—"));
+      tr.appendChild(el("td","c",r[I.punch_out_time] || "—"));
+      const why = el("td"); why.style.whiteSpace = "pre-line"; why.style.minWidth = "280px";
+      const rk = String(r[I.remark]||"").split(/ \/ (?=[−•\-])/).filter(Boolean);
+      why.textContent = rk.length ? rk.join("\n") : "ไม่ถูกหัก";
+      if (!rk.length) why.style.color = "var(--ink-3)";
+      tr.appendChild(why);
+      const sc = el("td","n", dayScore == null ? "—" : nf(dayScore,2));
+      if (dayScore != null){ sc.className = "n " + cls(dayScore); sc.style.fontWeight = "600"; }
+      tr.appendChild(sc);
+      const fv = dv && dv.m[ym] && dv.m[ym].d ? dv.m[ym].d[r[I.day]] : 0;
+      const ft = el("td","n" + (fv ? " neg" : ""), fv ? n0(fv) : "0");
+      if (fv && dv.m[ym].n && dv.m[ym].n[r[I.day]]) ft.title = dv.m[ym].n[r[I.day]];
+      tr.appendChild(ft);
+      tbody.appendChild(tr);
+    });
+    tb.appendChild(tbody);
+
+    /* %TA รายคันของเดือนนั้น (คันที่ จบส. คนนี้ขับ) */
+    const trucks = [...new Set(rs.map(r=>r[I.truck]))];
+    const t2 = el("table");
+    t2.innerHTML = '<thead><tr><th>เบอร์รถ</th><th class="n">คะแนนรวม</th><th class="n">วันทำงานทั้งเดือน</th><th class="n">%TA</th><th class="c">กลุ่ม TA</th></tr></thead>';
+    const b2 = el("tbody");
+    trucks.forEach(n=>{
+      const t = T[n], tr = el("tr");
+      tr.innerHTML = t
+        ? `<td class="truck">${esc(n)}</td><td class="n">${nf(t.score,2)}</td><td class="n">${nf(t.den_days,0)}</td><td class="n"><b>${nf(t.pct,2)}%</b></td><td class="c">${tierTag(t.tier)}</td>`
+        : `<td class="truck">${esc(n)}</td><td colspan="4">ไม่มีข้อมูลคะแนนของรถคันนี้</td>`;
+      b2.appendChild(tr);
+    });
+    t2.appendChild(b2);
+
+    const wrap = el("div");
+    const remD = Math.max(0, ...trucks.map(n=>T[n] ? (T[n].rem_days||0) : 0));
+    wrap.appendChild(el("div","hint","%TA ของรถที่ จบส. ขับในเดือนนี้ (รถ 1 คันมีคะแนนรวมทั้งเดือน ไม่แยกตามคนขับ)" +
+      (remD ? " · เดือนนี้ข้อมูลยังไม่ครบ — %TA เป็นประมาณการโดยให้วันที่เหลือ " + remD + " วัน ได้วันละ 1 คะแนน" : "")));
+    wrap.appendChild(t2);
+    wrap.appendChild(el("div","hint","รายวัน — คะแนนสุทธิวันนั้นคือคะแนนวันทำงานของรถหลังหักทุกเรื่องแล้ว (เต็ม 1 คะแนน)"));
+    wrap.appendChild(tb);
+    out.appendChild(panel(mo ? mo.label : ym, n0(rs.length) + " รายการ Punch", wrap));
+  });
+}
+
 /* ── 6. เกณฑ์ ─────────────────────────────────────────────── */
 function vRules(root){
   const m = D.meta;
@@ -3751,17 +3867,22 @@ function loginWhy(via){
   if (via === 'offline') return 'เรียก Apps Script ไม่ได้ จึงเทียบกับรายชื่อในกูเกิลชีตแทน และไม่พบคู่ชื่อผู้ใช้/รหัสผ่านนี้';
   return 'Apps Script ไม่ยืนยัน และไม่พบคู่ชื่อผู้ใช้/รหัสผ่านนี้ในกูเกิลชีต';
 }
-function startSession(u){
+function startSession(u, opts){
   var st = String(u.status||'').toUpperCase();
   /* SCG = เห็นทุกผู้รับเหมาและทุกแท็บ · VIP / VENDER = เห็นเฉพาะของบริษัทตนเอง (ตามคอลัมน์ Name) ทุกแท็บ · NORMAL = เห็นเฉพาะของตนเอง ซ่อนแท็บภาพรวม/สรุป/คำนวณรางวัล */
   SESSION={ name:u.name||u.user, code:u.user, status:u.status, all:/SCG/.test(st), vip:/VIP/.test(st) && !/SCG/.test(st), normal:/NORMAL/.test(st) && !/SCG|VIP/.test(st) };
   SESSION.admin = ADMIN_USERS.some(function(n){ return normUser(n) === normUser(u.user); });
+  if (opts && opts.jbs){            // เข้าผ่านกล่อง จบส. — ไม่ใช้ผู้ใช้/รหัสผ่าน เห็นเฉพาะแท็บ ข้อมูล จบส.
+    SESSION = { name:'จบส.', code:'', status:'JBS', all:true, vip:false, normal:false, admin:false, jbs:true };
+    TAB = 'jbs';
+  }
   ['btn-reload','btn-pick','btn-json'].forEach(function(id){
     var b = gid(id); if (b) b.hidden = !SESSION.admin;
   });
+  gid('btn-pw').hidden = !!SESSION.jbs;          // จบส. ไม่มีรหัสผ่านให้เปลี่ยน
   gid('whoChip').textContent = SESSION.name;
   gid('whoChip').title = 'ผู้ใช้ ' + SESSION.code + (SESSION.status? ' · '+SESSION.status : '');
-  gid('roleChip').textContent = SESSION.vip ? 'VIP — เห็นเฉพาะข้อมูลของบริษัทตนเอง · ทุกแท็บ' : SESSION.all ? 'SCG — ดูได้ทุกผู้รับเหมา' : SESSION.normal ? 'Normal — เห็นเฉพาะข้อมูลของตนเอง' : 'ผู้รับเหมา — เห็นเฉพาะข้อมูลของตนเอง';
+  gid('roleChip').textContent = SESSION.jbs ? 'จบส. — ค้นหาข้อมูลด้วยรหัส จบส.' : SESSION.vip ? 'VIP — เห็นเฉพาะข้อมูลของบริษัทตนเอง · ทุกแท็บ' : SESSION.all ? 'SCG — ดูได้ทุกผู้รับเหมา' : SESSION.normal ? 'Normal — เห็นเฉพาะข้อมูลของตนเอง' : 'ผู้รับเหมา — เห็นเฉพาะข้อมูลของตนเอง';
   gid('roleChip').style.background = SESSION.all ? 'rgba(134,239,172,.22)' : 'rgba(253,224,71,.22)';
   gid('login').hidden = true;
   document.body.classList.remove('locked');
@@ -4019,7 +4140,14 @@ function cfDoReset(info){
 }
 
 /* ── เริ่มระบบ ─────────────────────────────────────────────── */
+/* v89: ลิงก์เฉพาะ จบส. — เปิด index.html?jbs=1 (หรือ #jbs) เข้าแท็บ ข้อมูล จบส. ทันที ไม่ผ่านหน้า login */
+var JBS_LINK = /(^|[?&#])jbs(=|&|$)/i.test(location.search + location.hash);
 function authBoot(){
+  if (JBS_LINK){
+    startSession({name:'จบส.', user:'', status:'JBS'}, {jbs:true});
+    gid('btn-logout').hidden = true;
+    return;
+  }
   document.body.classList.add('locked');
   gid('login').hidden = false;
   ['p','pwOld','pwNew','pwNew2'].forEach(function(id){ addEye(gid(id)); });
@@ -4049,6 +4177,7 @@ function authBoot(){
     });
   });
   gid('pwOpenLogin').addEventListener('click',openPw);
+  gid('jbsOpen').addEventListener('click',function(){ startSession({name:'จบส.', user:'', status:'JBS'}, {jbs:true}); });
   gid('fgOpen').addEventListener('click',openForgot);
   gid('fgmodal').addEventListener('click',function(e){ if(e.target===this) cfClose(); });
   gid('pwCancel').addEventListener('click',function(){ gid('pwmodal').hidden = true; });
