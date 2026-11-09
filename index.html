@@ -1357,7 +1357,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 90;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 91;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -3088,8 +3088,8 @@ function jbsResult(out, code){
     const T = jbsTrucks(ym);
     const rs = rows.filter(r=>r[I.ym] === ym).sort((a,b)=>a[I.day]-b[I.day] || String(a[I.punch_in_time]).localeCompare(String(b[I.punch_in_time])));
     const tb = el("table"), hr = el("tr");
-    [["วันที่","c"],["เบอร์รถ",""],["โรงงาน",""],["เวลา In","c"],["เวลา Out","c"],["เรื่องที่ถูกหัก",""],
-     ["คะแนนสุทธิวันนั้น (ของรถ)","n"],["หักเงิน จบส. (บาท)","n"]].forEach(([l,a])=>hr.appendChild(el("th",a,l)));
+    [["วันที่","c"],["เบอร์รถ",""],["โรงงาน",""],["เวลา In","c"],["เวลา Out","c"],
+     ["คะแนนสุทธิวันนั้น (ของรถ)","n"],["หักเงิน จบส. (บาท)","n"],["เรื่องที่ถูกหัก",""]].forEach(([l,a])=>hr.appendChild(el("th",a,l)));
     const th = el("thead"); th.appendChild(hr); tb.appendChild(th);
     const tbody = el("tbody");
     rs.forEach(r=>{
@@ -3105,7 +3105,6 @@ function jbsResult(out, code){
       const rk = String(r[I.remark]||"").split(/ \/ (?=[−•\-])/).filter(Boolean);
       why.textContent = rk.length ? rk.join("\n") : "ไม่ถูกหัก";
       if (!rk.length) why.style.color = "var(--ink-3)";
-      tr.appendChild(why);
       const sc = el("td","n", dayScore == null ? "—" : nf(dayScore,2));
       if (dayScore != null){ sc.className = "n " + cls(dayScore); sc.style.fontWeight = "600"; }
       tr.appendChild(sc);
@@ -3113,6 +3112,7 @@ function jbsResult(out, code){
       const ft = el("td","n" + (fv ? " neg" : ""), fv ? n0(fv) : "0");
       if (fv && dv.m[ym].n && dv.m[ym].n[r[I.day]]) ft.title = dv.m[ym].n[r[I.day]];
       tr.appendChild(ft);
+      tr.appendChild(why);
       tbody.appendChild(tr);
     });
     tb.appendChild(tbody);
