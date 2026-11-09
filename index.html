@@ -1357,7 +1357,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 89;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 90;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -1867,7 +1867,8 @@ function boot(db, cached){
   }
 
   const upd = SRC.updated ? new Date(SRC.updated) : null;
-  $("#meta").innerHTML =
+  if (SESSION && SESSION.jbs) $("#meta").innerHTML = "";
+  else $("#meta").innerHTML =
     `ที่มา ${esc(SRC.name||"TA100.xlsx")}${SRC.local?" (ไฟล์ในเครื่อง)":""} · ${n0(D.meta.punch_rows)} แถว Punch<br>` +
     (upd && !isNaN(upd) ? `ไฟล์อัปเดต ${upd.toLocaleString("th-TH")}` : "") +
     (cached ? " · ใช้ข้อมูลที่จำไว้" : SRC.json ? " · โหลดจากไฟล์ข้อมูลสำเร็จรูป" : "") + (SRC.merged||"");
@@ -3017,7 +3018,9 @@ function vDetail(root){
 }
 
 /* ── 7. ข้อมูล จบส. (ค้นหาด้วยรหัส จบส.) ─────────────────── */
-const JBS = {q:"", cache:{}};
+const JBS_NOW = new Date();
+const JBS = {q:"", cache:{}, ym: JBS_NOW.getFullYear() + "-" + String(JBS_NOW.getMonth()+1).padStart(2,"0")};   // ค่าเริ่มต้น = เดือน/ปีปัจจุบัน
+const TH_MON = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
 function jbsTrucks(ym){          // คะแนน/%TA ของทุกคันในเดือนนั้น (ไม่ผูกกับตัวกรองหน้าจอ)
   if (!JBS.cache[ym]){
     const m = MONTHS.find(x=>x.key===ym), o = {};
@@ -3041,7 +3044,7 @@ function vJbs(root){
   }
   box.appendChild(row);
   const out = el("div"); out.style.marginTop = "14px"; box.appendChild(out);
-  root.appendChild(panel("ค้นหาข้อมูล จบส.", "กรอกรหัส จบส. (driver_no) แล้วกดค้นหา · แสดงเวลา In/Out เรื่องที่ถูกหัก คะแนนสุทธิรายวัน และ %TA", box));
+  root.appendChild(panel("ค้นหาข้อมูล จบส.", "", box));
   const doSearch = ()=>{ JBS.q = inp.value.trim(); jbsResult(out, JBS.q); };
   go.onclick = doSearch;
   inp.onkeydown = e=>{ if (e.key === "Enter"){ e.preventDefault(); doSearch(); } };
@@ -3057,11 +3060,28 @@ function jbsResult(out, code){
     return;
   }
   const dv = (D.drivers||[]).find(x=>String(x.driver).toUpperCase() === key);
-  const months = MONTHS.map(m=>m.key).filter(k=>rows.some(r=>r[I.ym] === k)).reverse();   // เดือนล่าสุดก่อน
   const first = rows[0];
-  const info = el("p","hint", "รหัส จบส. " + String(first[I.driver]) + (dv && dv.vendor ? " · ผู้รับเหมา " + dv.vendor : "") +
-    " · พบข้อมูล " + months.length + " เดือน (" + n0(rows.length) + " รายการ Punch)");
-  out.appendChild(info);
+  out.appendChild(el("p","hint", "รหัส จบส. " + String(first[I.driver]) + (dv && dv.vendor ? " · ผู้รับเหมา " + dv.vendor : "")));
+
+  /* ช่องเลือกเดือน/ปี — แสดงหลังค้นหาแล้ว (ค่าเริ่มต้น = เดือน/ปีปัจจุบัน) */
+  const yrs = new Set([JBS_NOW.getFullYear()]);
+  MONTHS.forEach(m=>yrs.add(+m.key.slice(0,4)));
+  const sel = el("div"); sel.style.cssText = "display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:6px 0 12px";
+  const selM = el("select"), selY = el("select");
+  TH_MON.forEach((n,i)=>{ const o = el("option",null,n); o.value = String(i+1).padStart(2,"0"); selM.appendChild(o); });
+  [...yrs].sort().forEach(y=>{ const o = el("option",null,"พ.ศ. " + (y+543)); o.value = String(y); selY.appendChild(o); });
+  selY.value = JBS.ym.slice(0,4); selM.value = JBS.ym.slice(5,7);
+  [selM, selY].forEach(x=>x.style.cssText = "padding:9px 11px;border:1px solid var(--rule);border-radius:6px;font-size:14.5px;background:#fff");
+  const lb = el("span",null,"เดือน/ปี"); lb.style.color = "var(--ink-3)";
+  sel.appendChild(lb); sel.appendChild(selM); sel.appendChild(selY);
+  const onSel = ()=>{ JBS.ym = selY.value + "-" + selM.value; jbsResult(out, code); };
+  selM.onchange = selY.onchange = onSel;
+  out.appendChild(sel);
+  const months = rows.some(r=>r[I.ym] === JBS.ym) ? [JBS.ym] : [];
+  if (!months.length){
+    out.appendChild(el("div","empty","ไม่พบข้อมูลของรหัส จบส. “" + code + "” ในเดือน " + TH_MON[+JBS.ym.slice(5,7)-1] + " พ.ศ. " + (+JBS.ym.slice(0,4)+543)));
+    return;
+  }
 
   months.forEach(ym=>{
     const mo = MONTHS.find(m=>m.key === ym);
@@ -3118,7 +3138,7 @@ function jbsResult(out, code){
     wrap.appendChild(t2);
     wrap.appendChild(el("div","hint","รายวัน — คะแนนสุทธิวันนั้นคือคะแนนวันทำงานของรถหลังหักทุกเรื่องแล้ว (เต็ม 1 คะแนน)"));
     wrap.appendChild(tb);
-    out.appendChild(panel(mo ? mo.label : ym, n0(rs.length) + " รายการ Punch", wrap));
+    out.appendChild(panel(TH_MON[+ym.slice(5,7)-1] + " " + (+ym.slice(0,4)+543), n0(rs.length) + " รายการ Punch", wrap));
   });
 }
 
@@ -3880,6 +3900,7 @@ function startSession(u, opts){
     var b = gid(id); if (b) b.hidden = !SESSION.admin;
   });
   gid('btn-pw').hidden = !!SESSION.jbs;          // จบส. ไม่มีรหัสผ่านให้เปลี่ยน
+  gid('whoChip').hidden = gid('roleChip').hidden = !!SESSION.jbs;
   gid('whoChip').textContent = SESSION.name;
   gid('whoChip').title = 'ผู้ใช้ ' + SESSION.code + (SESSION.status? ' · '+SESSION.status : '');
   gid('roleChip').textContent = SESSION.jbs ? 'จบส. — ค้นหาข้อมูลด้วยรหัส จบส.' : SESSION.vip ? 'VIP — เห็นเฉพาะข้อมูลของบริษัทตนเอง · ทุกแท็บ' : SESSION.all ? 'SCG — ดูได้ทุกผู้รับเหมา' : SESSION.normal ? 'Normal — เห็นเฉพาะข้อมูลของตนเอง' : 'ผู้รับเหมา — เห็นเฉพาะข้อมูลของตนเอง';
