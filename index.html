@@ -332,7 +332,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","รถแทน","Cost-Center"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 53;
+var ENGINE_VERSION = 54;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -468,6 +468,9 @@ function isPlantFix(dev, timeVal, status, rmk){
 }
 
 /* ── ตัวคำนวณหลัก ──────────────────────────────────────────── */
+/* v91: วันหยุด/วันหยุดประเพณี — หมายเหตุทั้ง Punch in และ Punch out, ไม่มีดีพี และไม่มีเวลาตรวจรถ
+   ถือเป็นโรงงานขอแก้ไข (เวลา In/Out เป็นเท่าไรก็ได้) ไม่หักคะแนน */
+var HOLIDAY_RE = /วันหยุด/;
 var EARLY_GRACE_MIN = 15;
 /* v83: สถานะ Punch out ที่เป็นพฤติกรรม จบส. (ตามชีต คะแนน-Punch คะแนนรถ = 1 ไม่หักด้วยสาเหตุสถานะ)
    ยังต้องถูกหักจากสาเหตุอื่นตามปกติ เช่น กลับก่อนเวลาเลิกงาน / device_out = W */
@@ -949,7 +952,8 @@ function buildDB(sheets, report){
     /* โรงงานขอแก้ไข — ไม่หักคะแนนใด ๆ ของวันนั้น ให้เต็ม 1 คะแนน */
     var fixIn  = isPlantFix(devIn,  cell(p,iInTime),  pin,  inRmk);
     var fixOut = isPlantFix(devOut, cell(p,iOutTime), pout, outRmk);
-    var plantFix = fixIn || fixOut;
+    var holidayFix = (ct == null && trips === 0 && HOLIDAY_RE.test(inRmk) && HOLIDAY_RE.test(outRmk));
+    var plantFix = fixIn || fixOut || holidayFix;
     if (plantFix){ dIn = 0; dDev = 0; dDevOut = 0; dOut = 0; dCt = 0; dRmk = 0; dRefuse = 0; dLeave = 0; ctStat = "plant_fix"; }
 
     /* device_in กับ device_out รวมกันหักได้ไม่เกิน 0.25 คะแนนต่อวัน
@@ -1005,7 +1009,7 @@ function buildDB(sheets, report){
     if (plantFix){
       why2.length = 0;
       why2.push("• โรงงานขอแก้ไข — ไม่หักคะแนน (หมายเหตุ: " +
-                (fixIn ? inRmk : outRmk) + ")");
+                (fixIn ? inRmk : fixOut ? outRmk : inRmk) + ")");
     }
 
     var rmk = why2.slice();
@@ -1357,7 +1361,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 91;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 92;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -2229,7 +2233,7 @@ function render(){
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
-  if (D && D.meta && (D.meta.engine||0) < 53){
+  if (D && D.meta && (D.meta.engine||0) < 54){
     const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
     w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
   }
@@ -3238,6 +3242,10 @@ function vRules(root){
           (เช่น “โรงงานขอแก้ไข”, “วันหยุดประเพณี”) โดยต้องไม่ใช่คำว่า “ระบบคำนวณ”
           และไม่ใช่การเคาะ จุด ขีด หรือ “ปกติ”</li>
     </ul>
+
+    <p style="margin:6px 0 0"><b>กรณีวันหยุด (เพิ่มใน v92)</b> — ถ้า punch_in_adj_remark <b>และ</b> punch_out_adj_remark
+    มีคำว่า “วันหยุด” (เช่น วันหยุดประเพณี, วันหยุดนักขัตฤกษ์) <b>และไม่มีดีพีในวัน และไม่มีเวลาตรวจรถ (check_time ว่าง)</b>
+    ให้ถือเป็นโรงงานขอแก้ไข ได้ 1 คะแนนเต็ม โดย <b>เวลา Punch in / out เป็นเท่าไรก็ได้</b> (เช่น In = Out หรือไม่ใช่ 00:00)</p>
 
     <p style="margin:14px 0 0"><b>ตรวจรถหลังเวลาเข้างาน + 30 นาที (punch_in_status = O)</b></p>
     <ul style="margin:6px 0 0;padding-left:20px">
