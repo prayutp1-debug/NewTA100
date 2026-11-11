@@ -1361,7 +1361,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 92;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 93;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -2500,6 +2500,7 @@ function kpiStrip(t){
   const der = derive();
   const tot = a=>t.reduce((s,x)=>s+x[a],0);
   const avg = t.length ? t.reduce((s,x)=>s+x.pct,0)/t.length : 0;
+  const sr = summaryRows(GB.division);   /* ใช้สูตรเดียวกับบล็อก "สรุปตามกิจการ" (หักเงิน จบส. ด้วย) ยอดจึงตรงกัน */
   $("#period").textContent = `${rangeLabel()} · วันทำงาน ${nf(der.workDays,0)} วัน`+(der.remDays?` (+ประมาณการอีก ${nf(der.remDays,0)} วัน)`:"");
   $("#kpis").innerHTML = [
     [n0(t.length),"รถที่มีการ Punch"],
@@ -2510,7 +2511,8 @@ function kpiStrip(t){
     [n0(tot("incentive")),"เงินรางวัล (บาท)"],
     [n0(tot("g_topup")),"ส่วนต่างการันตี (บาท)"],
     [n0(tot("penalty")),"หักเงินไม่โยก/ย้ายโรงงาน (บาท)"],
-    [n0(tot("net")),"รางวัลสุทธิ (บาท)"]
+    [n0(-sr.reduce((s,o)=>s+o.fine,0)),"หักเงิน จบส. (บาท)"],
+    [n0(sr.reduce((s,o)=>s+o.net,0)),"รางวัลสุทธิ (บาท)"]
   ].map(([v,l],i)=>`<div class="kpi"><b style="color:${KPI_COLOR[i%KPI_COLOR.length]}">${v}</b>`+
        `<span>${esc(l)}</span></div>`).join("");
 }
