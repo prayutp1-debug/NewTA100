@@ -332,7 +332,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","รถแทน","Cost-Center"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 54;
+var ENGINE_VERSION = 57;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -446,10 +446,15 @@ function isAutoRemark(s){ return /^ระบบคำนว/.test(s); }
 /** หมายเหตุ Punch out ที่เป็นเหตุผลจริงจากโรงงาน (เช่น "เช็คออกให้") — ใช้ยกเว้นการหัก device_out = W
  *  ไม่นับ: ว่าง / ปกติ / ระบบคำนวณ / ข้อความสั้นไร้ความหมาย ("-", ".", "ok" ฯลฯ) */
 var PLANT_OUT_RE = /เช็ค\s*เอ[าา]ท์?\s*ให้|เช็คออกให้|โรงงาน\s*(แก้ไข|ขอแก้|ทำให้|เช็ค)/;
+/* v96: หมายเหตุที่ "ไม่ถือเป็นเหตุผลให้โรงงานแก้ไข" — พฤติกรรมของ ผรม./จบส. ตัดคะแนนตาม punch_in_status / punch_out_status ปกติ */
+var NOFIX_RE = /ไม่\s*เข้าร่วม|ไม่มาทำงาน|จบส\.?\s*ไม่อยู่|ไม่\s*(ใส่ใจ|ให้ความร่วมมือ)/;
+/* v96: โรงงานไม่ต้องการหัก 0.25 เรื่องไม่ใช้ SDA — แต่คะแนนส่วนอื่นยังอิงตาม status ตามเดิม (ไม่ใช่โรงงานขอแก้ไขเต็มวัน) */
+var SDA_WAIVE_RE = /ผรม\.?\s*ยังไม่เข้าใจ|ผู้รับเหมา.{0,20}ไม่ตรง/;
 function isRealOutReason(s){
   if (!s) return false;
   var t = String(s).trim();
   if (blankRemark(t) || isAutoRemark(t)) return false;
+  if (NOFIX_RE.test(t)) return false;
   if (PLANT_OUT_RE.test(t)) return true;
   var core = t.replace(/[\s.,\-–—_*\/\\0-9:]/g, "");
   if (/^(ok|no|na|ไม่มี|ไม่มีเหตุผล|ปกติ)$/i.test(core)) return false;
@@ -468,9 +473,22 @@ function isPlantFix(dev, timeVal, status, rmk){
 }
 
 /* ── ตัวคำนวณหลัก ──────────────────────────────────────────── */
-/* v91: วันหยุด/วันหยุดประเพณี — หมายเหตุทั้ง Punch in และ Punch out, ไม่มีดีพี และไม่มีเวลาตรวจรถ
-   ถือเป็นโรงงานขอแก้ไข (เวลา In/Out เป็นเท่าไรก็ได้) ไม่หักคะแนน */
-var HOLIDAY_RE = /วันหยุด/;
+/* v94: คำที่ถือเป็นเหตุผลหยุดงานแน่นอน (ผ่านเสมอแม้ข้อความสั้น) — v95 ใช้ร่วมกับ isReasonRmk */
+var HOLIDAY_RE = /วันหยุด|หยุดประเพณี|หยุดตามประเพณี|หยุดนักขัตฤกษ์|โรงงานหยุด|หยุดโรงงาน|หยุดซ่อม|โรงงานเสีย|โรงงานปิด|ปิดโรงงาน|หยุดผลิต/;
+/** v95: หมายเหตุที่ "ระบุเหตุผลจริง" — ทุกข้อความยกเว้น ว่าง / ปกติ / จุด ขีด เคาะ / คำสั้นมาก ๆ / ระบบคำนวณ
+ *  และยกเว้นข้อความที่มีกติกาเฉพาะอยู่แล้ว (ลางาน, ไม่ยอมโยก, ไม่ให้ความร่วมมือ, ยืนยันว่าตรวจสายจริง) */
+var REASON_MIN_LEN = 5;
+function isReasonRmk(v){
+  if (!v) return false;
+  var t = String(v).trim();
+  if (!t || blankRemark(t) || isAutoRemark(t)) return false;
+  if (isLeave(t) || MOVE_REFUSE_RE.test(t) || LATE_RMK_RE.test(t) || /ไม่ให้ความร่วมมือ/.test(t)) return false;
+  if (NOFIX_RE.test(t) || SDA_WAIVE_RE.test(t)) return false;
+  if (HOLIDAY_RE.test(t)) return true;
+  var core = t.replace(/[\s.,\-–—_*\/\\0-9:()]/g, "");
+  if (/^(ok|no|na|n\/a|ไม่มี|ไม่มีเหตุผล|ไม่มีสาเหตุ|ไม่ทราบ|ไม่มีข้อมูล|ไม่ระบุ)$/i.test(core)) return false;
+  return core.length >= REASON_MIN_LEN;
+}
 var EARLY_GRACE_MIN = 15;
 /* v83: สถานะ Punch out ที่เป็นพฤติกรรม จบส. (ตามชีต คะแนน-Punch คะแนนรถ = 1 ไม่หักด้วยสาเหตุสถานะ)
    ยังต้องถูกหักจากสาเหตุอื่นตามปกติ เช่น กลับก่อนเวลาเลิกงาน / device_out = W */
@@ -952,9 +970,10 @@ function buildDB(sheets, report){
     /* โรงงานขอแก้ไข — ไม่หักคะแนนใด ๆ ของวันนั้น ให้เต็ม 1 คะแนน */
     var fixIn  = isPlantFix(devIn,  cell(p,iInTime),  pin,  inRmk);
     var fixOut = isPlantFix(devOut, cell(p,iOutTime), pout, outRmk);
-    var holidayFix = (ct == null && trips === 0 && HOLIDAY_RE.test(inRmk) && HOLIDAY_RE.test(outRmk));
+    var holidayFix = (hitRmk.length === 0 && (isReasonRmk(inRmk) || isReasonRmk(outRmk)));
     var plantFix = fixIn || fixOut || holidayFix;
     if (plantFix){ dIn = 0; dDev = 0; dDevOut = 0; dOut = 0; dCt = 0; dRmk = 0; dRefuse = 0; dLeave = 0; ctStat = "plant_fix"; }
+    else if (SDA_WAIVE_RE.test(inRmk) || SDA_WAIVE_RE.test(outRmk)){ dDev = 0; dDevOut = 0; devOutWhy = ""; }
 
     /* device_in กับ device_out รวมกันหักได้ไม่เกิน 0.25 คะแนนต่อวัน
        ถ้าเป็น W ทั้งสองฝั่ง ให้คิดฝั่ง Punch in ฝั่งเดียว */
@@ -1361,7 +1380,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 93;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 96;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -2233,7 +2252,7 @@ function render(){
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
-  if (D && D.meta && (D.meta.engine||0) < 54){
+  if (D && D.meta && (D.meta.engine||0) < 57){
     const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
     w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
   }
@@ -3245,9 +3264,17 @@ function vRules(root){
           และไม่ใช่การเคาะ จุด ขีด หรือ “ปกติ”</li>
     </ul>
 
-    <p style="margin:6px 0 0"><b>กรณีวันหยุด (เพิ่มใน v92)</b> — ถ้า punch_in_adj_remark <b>และ</b> punch_out_adj_remark
-    มีคำว่า “วันหยุด” (เช่น วันหยุดประเพณี, วันหยุดนักขัตฤกษ์) <b>และไม่มีดีพีในวัน และไม่มีเวลาตรวจรถ (check_time ว่าง)</b>
-    ให้ถือเป็นโรงงานขอแก้ไข ได้ 1 คะแนนเต็ม โดย <b>เวลา Punch in / out เป็นเท่าไรก็ได้</b> (เช่น In = Out หรือไม่ใช่ 00:00)</p>
+    <p style="margin:6px 0 0"><b>กรณีระบุเหตุผลในหมายเหตุ (ปรับใน v95)</b> — ถ้า punch_in_adj_remark <b>หรือ</b> punch_out_adj_remark
+    ระบุเหตุผลใด ๆ (เช่น วันหยุด, โรงงานหยุด, หยุดซ่อม, โรงงานเสีย, ไม่มีงาน, น้ำท่วม, ฝนตกไม่มีงาน ฯลฯ)
+    ให้ถือเป็นโรงงานขอแก้ไข ได้ 1 คะแนนเต็ม <b>ไม่ว่าจะมีหรือไม่มีเวลา Punch in / out และเวลาตรวจรถ</b>
+    ยกเว้นหมายเหตุที่เป็น ว่าง, “ปกติ”, จุด/ขีด/เคาะ, คำสั้นมาก (ไม่ถึง 5 ตัวอักษร) หรือ “ระบบคำนวณ”
+    และหมายเหตุที่มีกติกาเฉพาะอยู่แล้ว (ลางาน, ไม่ยอมโยก, ไม่ให้ความร่วมมือ, ไม่ตรวจสภาพรถเกินเวลาเข้างาน, ข้อความตามชีตคะแนน-Punch)
+    (คิวและรายได้ที่มีจริงยังนับตามปกติ)</p>
+    <p style="margin:6px 0 0"><b>หมายเหตุที่ไม่ถือเป็นโรงงานแก้ไขให้ (v96)</b></p>
+    <ul style="margin:4px 0 0 18px">
+      <li>“ผรม.ยังไม่เข้าใจระบบ/กติกา TA100”, “ผู้รับเหมา… ไม่ตรง…” → <b>ไม่หัก 0.25 เรื่องไม่ใช้ SDA</b> เท่านั้น คะแนนส่วนอื่นอิงตาม punch_in_status / punch_out_status ตามปกติ</li>
+      <li>“ไม่เข้าร่วมกิจกรรม KYT”, “ไม่มาทำงาน”, “จบส.ไม่อยู่”, ไม่ใส่ใจ/ไม่ให้ความร่วมมือ → ตัดคะแนนตาม punch_in_status / punch_out_status ปกติ ไม่นับเป็นเหตุผลให้โรงงานแก้ไข</li>
+    </ul>
 
     <p style="margin:14px 0 0"><b>ตรวจรถหลังเวลาเข้างาน + 30 นาที (punch_in_status = O)</b></p>
     <ul style="margin:6px 0 0;padding-left:20px">
