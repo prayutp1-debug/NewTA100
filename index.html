@@ -332,7 +332,7 @@ var READ_OPTS = {type:"array", cellDates:false, cellText:false, cellNF:false, de
                  sheets:["Punch","จดทะเบียน","การันตี","เวลาทำงาน","วันทำงาน","คะแนน-Punch","รถแทน","Cost-Center"]};
 var AOA_OPTS  = {header:1, raw:true, defval:null};
 
-var ENGINE_VERSION = 57;
+var ENGINE_VERSION = 58;
 
 var TA_TIERS = [
   {name:"TA 1", min:95, inc: 6, gpct:1.000},
@@ -478,6 +478,12 @@ var HOLIDAY_RE = /วันหยุด|หยุดประเพณี|หย
 /** v95: หมายเหตุที่ "ระบุเหตุผลจริง" — ทุกข้อความยกเว้น ว่าง / ปกติ / จุด ขีด เคาะ / คำสั้นมาก ๆ / ระบบคำนวณ
  *  และยกเว้นข้อความที่มีกติกาเฉพาะอยู่แล้ว (ลางาน, ไม่ยอมโยก, ไม่ให้ความร่วมมือ, ยืนยันว่าตรวจสายจริง) */
 var REASON_MIN_LEN = 5;
+/* v97: งวด พ.ย. 2026 เป็นต้นไป — โรงงานขอแก้ไขแยกรายฝั่ง และต้อง status = O เท่านั้น
+ *   Punch in  = O + ระบุเหตุผล → ไม่หัก Punch in / device_in / ตรวจรถ
+ *   Punch out = O + ระบุเหตุผล → ไม่หัก Punch out / device_out
+ *   status อื่น (เช่น 4 รถเสีย) หมายเหตุเป็นแค่บันทึก → หักตาม status ปกติ
+ * งวดก่อนหน้านี้ (ก.ย./ต.ค.) ใช้เกณฑ์เดิม (v96) ไม่แก้ย้อนหลัง */
+var REASON_RULE_FROM = "2026-11";
 function isReasonRmk(v){
   if (!v) return false;
   var t = String(v).trim();
@@ -846,11 +852,20 @@ function buildDB(sheets, report){
     var plantOutNo = oRow ? S(cell(oRow,iPlant)) : plantNo;
     var outRmk = S(cell(p,iOutRmk));
     var inRmk  = S(cell(p,iInRmk));
+    var newRule = (ym >= REASON_RULE_FROM);        // v97
 
     /* การโยกรถข้ามโรงงาน */
     var mv2 = moveKind(inRmk, outRmk);
     var moved = mv2 === "help";                       // โยกมาช่วยงาน = ยกเว้นเรื่อง SDA
     var dRefuse = (mv2 === "refuse" && pout !== "8") ? DED_REFUSE : 0;  // ไม่ยอมโยก (ถ้าเป็นรหัส 8 อยู่แล้วไม่หักซ้ำ)
+
+    /* กฎที่ดูจากข้อความในช่อง punch_out_adj_remark */
+    var hitRmk = [];
+    if (outRmk) for (var rq=0; rq<RMK_RULES.length; rq++){
+      if (outRmk.indexOf(RMK_RULES[rq].kw) !== -1) hitRmk.push(RMK_RULES[rq]);
+    }
+    var dRmk = 0;
+    for (var rq2=0; rq2<hitRmk.length; rq2++) dRmk += hitRmk[rq2].pts;
 
     var tripRaw = cell(p,iTrip);
     var trips = (S(tripRaw) === "ไม่มีดีพี" ? 0 : (+tripRaw || 0));
@@ -858,7 +873,9 @@ function buildDB(sheets, report){
     var dIn  = SC_IN[pin]   || 0;
     var dDev = moved ? 0 : (SC_DEV[devIn] || 0);
     var devInWaived = false;       // โรงงานเช็คอินให้พร้อมระบุเหตุผล (punch_in_status = O) — ไม่หัก device_in = W
-    if (dDev < 0 && pin === "O" && isRealOutReason(inRmk)){ dDev = 0; devInWaived = true; }
+    var inReason  = newRule && pin  === "O" && isReasonRmk(inRmk);                          // v97
+    var outReason = newRule && pout === "O" && isReasonRmk(outRmk) && hitRmk.length === 0;  // v97
+    if (dDev < 0 && pin === "O" && (newRule ? inReason : isRealOutReason(inRmk))){ dDev = 0; devInWaived = true; }
     var movedFlag = moved;
 
     /* ── punch out ── */
@@ -874,7 +891,8 @@ function buildDB(sheets, report){
        (ถ้า Punch out หลังเวลาเลิกงานแล้ว ไม่ต้องระบุเหตุผลก็ไม่หัก) */
     var devOutWaived = false;
     if (devOut === "W" && early && !moved && normalOut){   // v81: Punch out สถานะอื่นที่ถูกหักแล้ว ไม่หัก device_out ซ้ำ
-      if (isRealOutReason(outRmk) && (pout === "O" || PLANT_OUT_RE.test(outRmk))){
+      if (newRule ? (outReason || (isJbsOut && PLANT_OUT_RE.test(outRmk)))
+                  : (isRealOutReason(outRmk) && (pout === "O" || PLANT_OUT_RE.test(outRmk)))){
         devOutWaived = true;      // โรงงานเช็คออกให้พร้อมเหตุผลจริง — ไม่หัก device_out
       } else {
         dDevOut = DED_SDA;
@@ -921,14 +939,6 @@ function buildDB(sheets, report){
                " (ดีพีในวัน " + (trips > 0 ? trips + " เที่ยว" : "ไม่มีดีพี") + ")";
     }
 
-    /* กฎที่ดูจากข้อความในช่อง punch_out_adj_remark */
-    var hitRmk = [];
-    if (outRmk) for (var rq=0; rq<RMK_RULES.length; rq++){
-      if (outRmk.indexOf(RMK_RULES[rq].kw) !== -1) hitRmk.push(RMK_RULES[rq]);
-    }
-    var dRmk = 0;
-    for (var rq2=0; rq2<hitRmk.length; rq2++) dRmk += hitRmk[rq2].pts;
-
     /* ── check_time ── */
     var dCt = 0, ctStat = "on_time", note = "", lateFixed = false;
     var ct = timeSecs(cell(p,iCheck));
@@ -962,6 +972,8 @@ function buildDB(sheets, report){
         }
       }
     }
+    var ctWaivedIn = false;
+    if (inReason && dCt < 0){ dCt = 0; note = ""; ctStat = "plant_ok"; ctWaivedIn = true; }   // v97: Punch in = O + ระบุเหตุผล → ไม่หักตรวจรถ
     /* โรงงานแก้ไขให้เป็นปกติ — ไม่หักเรื่องตรวจรถสายและไม่หักเรื่องไม่ใช้ SDA */
     if (lateFixed){
       dDev = 0; dDevOut = 0; devOutWhy = "";
@@ -970,7 +982,10 @@ function buildDB(sheets, report){
     /* โรงงานขอแก้ไข — ไม่หักคะแนนใด ๆ ของวันนั้น ให้เต็ม 1 คะแนน */
     var fixIn  = isPlantFix(devIn,  cell(p,iInTime),  pin,  inRmk);
     var fixOut = isPlantFix(devOut, cell(p,iOutTime), pout, outRmk);
-    var holidayFix = (hitRmk.length === 0 && (isReasonRmk(inRmk) || isReasonRmk(outRmk)));
+    var holidayFix = newRule
+      ? (hitRmk.length === 0 && ((pin === "O" && HOLIDAY_RE.test(inRmk) && isReasonRmk(inRmk)) ||
+                                 (pout === "O" && HOLIDAY_RE.test(outRmk) && isReasonRmk(outRmk))))
+      : (hitRmk.length === 0 && (isReasonRmk(inRmk) || isReasonRmk(outRmk)));
     var plantFix = fixIn || fixOut || holidayFix;
     if (plantFix){ dIn = 0; dDev = 0; dDevOut = 0; dOut = 0; dCt = 0; dRmk = 0; dRefuse = 0; dLeave = 0; ctStat = "plant_fix"; }
     else if (SDA_WAIVE_RE.test(inRmk) || SDA_WAIVE_RE.test(outRmk)){ dDev = 0; dDevOut = 0; devOutWhy = ""; }
@@ -1009,6 +1024,8 @@ function buildDB(sheets, report){
     if (devOutWaived) why2.push("• โรงงานเช็คออกให้พร้อมระบุเหตุผล — ไม่หักเรื่อง device_out = W (หมายเหตุ: " + outRmk + ")");
     if (devCapped)
       why2.push("• ไม่ใช้ SDA ทั้งตอน Punch in และ Punch out — หักรวมกันไม่เกิน 0.25 คะแนน/วัน");
+    if (ctWaivedIn)
+      why2.push("• Punch in = O และโรงงานระบุเหตุผล — ไม่หักเรื่องตรวจรถ (หมายเหตุ: " + inRmk + ")");
     if (lateFixed)
       why2.push("• ตรวจรถหลังเวลาเข้างาน+" + LATE_GRACE_MIN + " น. แต่โรงงานแก้ไขเป็นปกติ — ไม่หักคะแนน" +
                 (inRmk ? " (หมายเหตุ: " + inRmk + ")" : " (ไม่ได้ระบุเหตุผล)"));
@@ -1380,7 +1397,7 @@ if (typeof WorkerGlobalScope !== "undefined" && typeof self !== "undefined"
 </script>
 <script>
 "use strict";
-const APP_VERSION = 96;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
+const APP_VERSION = 97;   // เพิ่มเลขนี้เมื่อแก้เกณฑ์ เพื่อล้างผลคำนวณเก่าที่จำไว้
 // ฐานข้อมูล — วางไฟล์ไว้ที่ไหนก็ได้ในสองตำแหน่งนี้ อัปเดตเดือนใหม่แค่แทนที่ไฟล์
 const XLSX_CANDIDATES = ["data/TA100.xlsx", "TA100.xlsx"];
 // ไฟล์ผลคำนวณสำเร็จรูป — ถ้ามีและตรงกับไฟล์ Excel ปัจจุบัน จะโหลดแทน (เร็วกว่าราว 10 เท่า)
@@ -2252,7 +2269,7 @@ function render(){
     const e = $("#"+id); if(e) e.hidden = h;
   });
   const v = $("#view"); v.innerHTML="";
-  if (D && D.meta && (D.meta.engine||0) < 57){
+  if (D && D.meta && (D.meta.engine||0) < 58){
     const w = el("p","hint","⚠ ข้อมูลชุดนี้สร้างจากเอนจินเวอร์ชันเก่า (v"+(D.meta.engine||"?")+") จึงยังไม่มีผล \"รถแทน\" — กด \"ใช้ไฟล์ Excel อื่น\" เลือก TA100.xlsx ใหม่ แล้ว \"บันทึกไฟล์ข้อมูล\" และอัปโหลด .json.gz ขึ้น GitHub");
     w.style.background="#fff3cd"; w.style.color="#7a5200"; v.appendChild(w);
   }
@@ -3264,7 +3281,15 @@ function vRules(root){
           และไม่ใช่การเคาะ จุด ขีด หรือ “ปกติ”</li>
     </ul>
 
-    <p style="margin:6px 0 0"><b>กรณีระบุเหตุผลในหมายเหตุ (ปรับใน v95)</b> — ถ้า punch_in_adj_remark <b>หรือ</b> punch_out_adj_remark
+    <p style="margin:6px 0 0"><b>งวด พ.ย. 2026 เป็นต้นไป (v97) — โรงงานขอแก้ไขแยกรายฝั่ง และต้องเป็น status “O” เท่านั้น</b></p>
+    <ul style="margin:4px 0 0 18px">
+      <li><b>punch_in_status = O</b> และ punch_in_adj_remark ระบุเหตุผลครบถ้วน → ไม่หักฝั่ง Punch in / device_in และการตรวจรถ</li>
+      <li><b>punch_out_status = O</b> และ punch_out_adj_remark ระบุเหตุผลครบถ้วน → ไม่หักฝั่ง Punch out / device_out</li>
+      <li>status อื่น (เช่น 4 รถเสีย, 8 ย้ายโรงงาน, T มาสาย) หมายเหตุเป็นแค่บันทึกให้ทราบ → <b>หักตาม status ปกติ</b> เช่น รถเสีย ไม่มีดีพีหัก 1.00 / มีดีพีหัก 0.50</li>
+      <li>ข้อความ “วันหยุด / โรงงานหยุด / หยุดซ่อม / โรงงานเสีย …” ที่ status = O ยังถือเป็นโรงงานขอแก้ไขทั้งวัน (ได้ 1 คะแนน) ตามเดิม</li>
+      <li>งวด ก.ย. และ ต.ค. 2026 ใช้เกณฑ์เดิมตามย่อหน้าด้านล่าง ไม่แก้ย้อนหลัง</li>
+    </ul>
+    <p style="margin:6px 0 0"><b>กรณีระบุเหตุผลในหมายเหตุ — ใช้กับงวดก่อน พ.ย. 2026 (v95)</b> — ถ้า punch_in_adj_remark <b>หรือ</b> punch_out_adj_remark
     ระบุเหตุผลใด ๆ (เช่น วันหยุด, โรงงานหยุด, หยุดซ่อม, โรงงานเสีย, ไม่มีงาน, น้ำท่วม, ฝนตกไม่มีงาน ฯลฯ)
     ให้ถือเป็นโรงงานขอแก้ไข ได้ 1 คะแนนเต็ม <b>ไม่ว่าจะมีหรือไม่มีเวลา Punch in / out และเวลาตรวจรถ</b>
     ยกเว้นหมายเหตุที่เป็น ว่าง, “ปกติ”, จุด/ขีด/เคาะ, คำสั้นมาก (ไม่ถึง 5 ตัวอักษร) หรือ “ระบบคำนวณ”
